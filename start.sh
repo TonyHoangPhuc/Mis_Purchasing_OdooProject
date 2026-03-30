@@ -1,7 +1,3 @@
 #!/bin/bash
-
 echo "Starting Odoo..."
-
-odoo \
-  --config=odoo.conf \
-  --http-port=$PORT
+odoo -c /etc/odoo/odoo.conf --http-port=$PORT
