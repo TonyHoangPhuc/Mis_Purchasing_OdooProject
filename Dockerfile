@@ -2,10 +2,12 @@ FROM odoo:18
 
 USER root
 
+# Copy config + addons
 COPY ./custom_addons /mnt/extra-addons
 COPY ./odoo.conf /etc/odoo/odoo.conf
-COPY ./start.sh /start.sh
 
-RUN chmod +x /start.sh
+# Expose port
+EXPOSE 10000
 
-CMD ["/start.sh"]
+# Run Odoo
+CMD ["odoo", "-c", "/etc/odoo/odoo.conf", "--http-port=10000"]
