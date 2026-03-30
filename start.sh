@@ -1,9 +1,7 @@
 #!/bin/bash
 
-echo "Current dir:"
-pwd
+echo "Starting Odoo..."
 
-echo "List files:"
-ls
-
-odoo -c /opt/render/project/src/odoo.conf
+odoo \
+  --config=odoo.conf \
+  --http-port=$PORT
