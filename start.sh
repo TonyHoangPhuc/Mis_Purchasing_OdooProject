@@ -1,2 +1,2 @@
 #!/bin/bash
-odoo -c odoo.conf
+odoo -c /opt/render/project/src/odoo.conf
