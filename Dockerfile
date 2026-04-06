@@ -1,12 +1,17 @@
 # Sử dụng bản Odoo 17 chính thức làm chuẩn
 FROM odoo:17.0
+
 USER root
+
+# Mở port 7860 cho Hugging Face
 EXPOSE 7860
 
-# Trả lại quyền bảo mật cho user odoo
+COPY ./custom_addons /mnt/extra-addons
+
+RUN chown -R odoo:odoo /mnt/extra-addons
+
 USER odoo
 
-# Lệnh khởi động Odoo
 CMD odoo \
     --http-port=7860 \
     --db_host=$DB_HOST \
