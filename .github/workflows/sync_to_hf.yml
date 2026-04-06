@@ -14,6 +14,6 @@ jobs:
           lfs: true
       - name: Push to hub
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DEPLOY_ODOO: ${{ secrets.HF_TOKEN }}
         run: |
           git push --force https://IceMisha:$HF_TOKEN@huggingface.co/spaces/IceMisha/OdooProject main
