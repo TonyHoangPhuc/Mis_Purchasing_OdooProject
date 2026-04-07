@@ -6,16 +6,15 @@ USER root
 # Mở port 7860 cho Hugging Face
 EXPOSE 7860
 
-# Đưa thư mục custom module của bạn vào container
+# Đưa thư mục custom module vào container
 COPY ./custom_addons /mnt/extra-addons
 
-# Cấp quyền cho user odoo để tránh lỗi Permission Denied
+# Cấp quyền cho user odoo
 RUN chown -R odoo:odoo /mnt/extra-addons
 
-# Chuyển về lại user odoo (bắt buộc vì lý do bảo mật)
 USER odoo
 
-# Lệnh khởi chạy Odoo với các biến môi trường của Supabase
+# Lệnh khởi chạy tối ưu
 CMD odoo \
     --http-port=7860 \
     --db_host=$DB_HOST \
