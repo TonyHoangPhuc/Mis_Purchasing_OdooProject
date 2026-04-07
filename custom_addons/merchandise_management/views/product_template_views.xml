@@ -1,25 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <!-- Giao diện Form: Thêm cấu hình Merchandise -->
     <record id="product_template_form_view_merchandise_inherit" model="ir.ui.view">
         <field name="name">product.template.form.inherit.merchandise</field>
         <field name="model">product.template</field>
         <field name="inherit_id" ref="product.product_template_form_view"/>
         <field name="arch" type="xml">
-            <!-- Sử dụng XPath trực tiếp vào field chuẩn để đảm bảo tính tương thích -->
-            <!-- Chèn vào sau cụm Purchase (bao gồm cả ô tick và nhãn) để không làm lệch giao diện -->
             <xpath expr="//div[@name='options']" position="inside">
                 <span class="d-inline-block">
                     <field name="x_mer_stop_ordering"/>
                     <label for="x_mer_stop_ordering"/>
                 </span>
             </xpath>
-            <!-- Thêm thẻ Khuyến mãi ngay dưới Giá Bán ở màn hình chính -->
             <xpath expr="//field[@name='list_price']" position="after">
                 <field name="current_promotion_price" widget="monetary" invisible="current_promotion_price == 0" class="text-success" string="Giá Sale"/>
             </xpath>
-            <!-- Thêm vào tab Inventory -->
-            <xpath expr="//page[@name='inventory']" position="inside">
+            <xpath expr="//page[@name='general_information']" position="inside">
                 <group string="Cấu hình Merchandise">
+                    <field name="x_mer_supply_route" widget="radio" options="{'horizontal': true}"/>
                     <field name="x_mer_stock_status" decoration-danger="x_mer_stock_status == 'understock'" decoration-warning="x_mer_stock_status == 'overstock'"/>
                     <field name="current_promotion_price" widget="monetary"/>
                 </group>
@@ -27,15 +25,65 @@
         </field>
     </record>
 
+    <!-- Giao diện Danh sách (Tree): Cải tiến cột thông tin -->
     <record id="product_template_tree_view_merchandise_inherit" model="ir.ui.view">
         <field name="name">product.template.list.inherit.merchandise</field>
         <field name="model">product.template</field>
         <field name="inherit_id" ref="product.product_template_tree_view"/>
         <field name="arch" type="xml">
-            <!-- Với view kế thừa, không dùng thẻ <list> bao quanh xpath -->
+            <xpath expr="//field[@name='list_price']" position="attributes">
+                <attribute name="string">Giá gốc</attribute>
+            </xpath>
+            <xpath expr="//field[@name='list_price']" position="after">
+                <field name="current_promotion_price" widget="monetary" string="Giá khuyến mãi" decoration-success="current_promotion_price > 0"/>
+            </xpath>
             <xpath expr="//field[@name='name']" position="after">
-                <field name="x_mer_stock_status" widget="badge" decoration-warning="x_mer_stock_status == 'overstock'" decoration-danger="x_mer_stock_status == 'understock'"/>
+                <field name="qty_available" string="Số lượng"/>
+                <field name="uom_id" string="Đơn vị" groups="uom.group_uom"/>
+                <field name="x_mer_supply_route" string="Luồng" widget="badge" decoration-info="x_mer_supply_route == 'warehouse'" decoration-warning="x_mer_supply_route == 'supplier_direct'"/>
+                <field name="x_mer_stock_status" string="Tình trạng" widget="badge" decoration-warning="x_mer_stock_status == 'overstock'" decoration-danger="x_mer_stock_status == 'understock'" decoration-success="x_mer_stock_status == 'normal'"/>
                 <field name="x_mer_stop_ordering" widget="boolean_toggle"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Giao diện Kanban: 5 hàng dọc Merchandise -->
+    <record id="product_template_kanban_view_merchandise_inherit" model="ir.ui.view">
+        <field name="name">product.template.kanban.inherit.merchandise</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_kanban_view"/>
+        <field name="arch" type="xml">
+            <!-- Nạp dữ liệu bổ sung -->
+            <xpath expr="//templates" position="before">
+                <field name="default_code"/>
+                <field name="qty_available"/>
+                <field name="uom_id"/>
+                <field name="x_mer_stock_status"/>
+                <field name="x_mer_supply_route"/>
+                <field name="current_promotion_price"/>
+                <field name="currency_id" invisible="1"/>
+            </xpath>
+            
+            <!-- Thay thế toàn bộ nội dung chính bằng cấu trúc 5 hàng dọc -->
+            <xpath expr="//main" position="replace">
+                <main style="display: block !important; width: 100% !important;">
+                    <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 3px;">
+                        [<field name="default_code"/>] <field name="name"/>
+                    </div>
+                    <div class="small text-muted mb-1">
+                        Số lượng: <field name="qty_available"/> <field name="uom_id"/>
+                    </div>
+                    <div style="font-size: 0.9em;">
+                        Giá gốc: <field name="list_price" widget="monetary" options="{'currency_field': 'currency_id'}"/>
+                    </div>
+                    <div style="font-size: 0.9em; color: #198754; font-weight: bold;" invisible="current_promotion_price == 0">
+                        Giá khuyến mãi: <field name="current_promotion_price" widget="monetary" options="{'currency_field': 'currency_id'}"/>
+                    </div>
+                    <div class="mt-1 d-flex flex-wrap gap-1">
+                        <field name="x_mer_supply_route" widget="badge" decoration-info="x_mer_supply_route == 'warehouse'" decoration-warning="x_mer_supply_route == 'supplier_direct'"/>
+                        <field name="x_mer_stock_status" string="Tình trạng" widget="badge" decoration-warning="x_mer_stock_status == 'overstock'" decoration-danger="x_mer_stock_status == 'understock'" decoration-success="x_mer_stock_status == 'normal'"/>
+                    </div>
+                </main>
             </xpath>
         </field>
     </record>

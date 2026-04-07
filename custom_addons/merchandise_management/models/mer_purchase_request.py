@@ -29,7 +29,7 @@ class MerPurchaseRequest(models.Model):
     
     user_id = fields.Many2one('res.users', string='Người tạo', default=lambda self: self.env.user, tracking=True)
     manager_id = fields.Many2one('res.users', string='Người phê duyệt', tracking=True)
-    partner_id = fields.Many2one('res.partner', string='Kho cung cấp', required=True)
+    partner_id = fields.Many2one('res.partner', string='Kho tổng / Nhà cung cấp', required=True)
     date_request = fields.Date(string='Ngày yêu cầu', default=fields.Date.today)
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')
@@ -43,6 +43,19 @@ class MerPurchaseRequest(models.Model):
             if vals.get('name', _('New')) == _('New'):
                 vals['name'] = self.env['ir.sequence'].next_by_code('mer.purchase.request') or _('New')
         return super(MerPurchaseRequest, self).create(vals_list)
+
+    @api.onchange('line_ids')
+    def _onchange_line_ids(self):
+        if self.line_ids and not self.partner_id:
+            first_product = self.line_ids[0].product_id
+            if first_product:
+                if first_product.x_mer_supply_route == 'supplier_direct':
+                    seller = first_product.seller_ids[:1]
+                    if seller:
+                        self.partner_id = seller.partner_id.id
+                else:
+                    # Giao từ Kho tổng -> Mặc định lấy theo Công ty
+                    self.partner_id = self.env.company.partner_id.id
 
     def action_submit(self):
         for request in self:

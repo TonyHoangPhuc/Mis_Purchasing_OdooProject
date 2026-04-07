@@ -16,6 +16,11 @@ class ProductTemplate(models.Model):
         ('slow_moving', 'Hàng tồn lâu (Slow Moving)')
     ], string='Trạng thái tồn kho (Mer)', default='normal')
 
+    x_mer_supply_route = fields.Selection([
+        ('warehouse', 'Kho Tổng'),
+        ('supplier_direct', 'Trực tiếp từ NCC')
+    ], string='Luồng Cung Ứng', default='warehouse', help='Hàng hóa được giao từ Kho tổng hay giao trực tiếp từ Nhà cung cấp đến cửa hàng.')
+
     # Bổ sung trường này để khắc phục lỗi OwlError do view cũ yêu cầu
     current_promotion_price = fields.Float(string='Giá khuyến mãi hiện tại', company_dependent=True)
 
