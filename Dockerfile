@@ -1,12 +1,28 @@
-FROM odoo:18
+# Sử dụng bản Odoo 19 chính thức làm chuẩn
+FROM odoo:19.0
 
 USER root
 
-# Copy addons + config
+# Mở port 7860 cho Hugging Face
+EXPOSE 7860
+
+# Đưa thư mục custom module vào container
 COPY ./custom_addons /mnt/extra-addons
-COPY ./odoo.conf /etc/odoo/odoo.conf
-COPY ./start.sh /start.sh
 
-RUN chmod +x /start.sh
+# Cấp quyền cho user odoo
+RUN chown -R odoo:odoo /mnt/extra-addons
 
-CMD ["/start.sh"]
+USER odoo
+
+# Lệnh khởi chạy tối ưu
+CMD odoo \
+    --http-port=7860 \
+    --db_host=$DB_HOST \
+    --db_port=$DB_PORT \
+    --db_user=$DB_USER \
+    --db_password=$DB_PASSWORD \
+    --proxy-mode \
+    --db-filter=^OdooProjectV2$ \
+    --limit-time-real=0 \
+    --limit-time-cpu=0 \
+    -d OdooProjectV2

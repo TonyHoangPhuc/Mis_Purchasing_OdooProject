@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_merchandise_root"
+              name="Merchandise"
+              web_icon="purchase,static/description/icon.png"
+              sequence="10"/>
+
+    <menuitem id="menu_merchandise_requests"
+              name="Yêu cầu mua hàng (PR)"
+              parent="menu_merchandise_root"
+              action="action_mer_purchase_request"
+              sequence="10"/>
+
+    <menuitem id="menu_merchandise_promotion"
+              name="Khuyến mãi"
+              parent="menu_merchandise_root"
+              action="action_mer_promotion"
+              sequence="15"/>
+
+    <menuitem id="menu_merchandise_discrepancy"
+              name="Báo cáo sai lệch"
+              parent="menu_merchandise_root"
+              action="action_mer_discrepancy_report"
+              sequence="20"/>
+
+    <menuitem id="menu_merchandise_products"
+              name="Sản phẩm"
+              parent="menu_merchandise_root"
+              action="product.product_template_action_all"
+              sequence="30"/>
+              
+    <menuitem id="menu_merchandise_config"
+              name="Cấu hình"
+              parent="menu_merchandise_root"
+              sequence="100"/>
+</odoo>

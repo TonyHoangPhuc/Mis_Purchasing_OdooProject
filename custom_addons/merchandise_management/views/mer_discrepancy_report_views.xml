@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_discrepancy_report_form" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.form</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="arch" type="xml">
+            <form string="Báo cáo sai lệch hàng hóa">
+                <header>
+                    <button name="action_confirm_report" string="Xác nhận báo cáo" type="object" class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_start_solving" string="Đang giải quyết" type="object" class="btn-info" invisible="state != 'reporting'"/>
+                    <button name="action_done" string="Hoàn tất" type="object" class="btn-success" invisible="state != 'solving'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,reporting,solving,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="date_discrepancy"/>
+                            <field name="user_id" readonly="1"/>
+                            <field name="reason"/>
+                        </group>
+                        <group>
+                            <field name="picking_id"/>
+                            <field name="purchase_id"/>
+                        </group>
+                    </group>
+                    <group string="Chi tiết sai lệch">
+                        <group>
+                            <field name="product_id"/>
+                            <field name="expected_qty"/>
+                        </group>
+                        <group>
+                            <field name="actual_qty"/>
+                            <field name="difference_qty"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Phương án giải quyết" name="solution">
+                            <group>
+                                <field name="warehouse_partner_id" invisible="state == 'draft'"/>
+                            </group>
+                            <field name="solution_notes" placeholder="Nhập chi tiết phương án giải quyết/chỉ đạo..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_mer_discrepancy_report_tree" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.list</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="arch" type="xml">
+            <list string="Báo cáo sai lệch hàng hóa">
+                <field name="name"/>
+                <field name="date_discrepancy"/>
+                <field name="product_id"/>
+                <field name="reason" widget="badge" decoration-danger="reason in ['shortage', 'damage']" decoration-success="reason == 'overage'"/>
+                <field name="state" widget="badge" decoration-info="state == 'reporting'" decoration-success="state == 'done'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_mer_discrepancy_report" model="ir.actions.act_window">
+        <field name="name">Báo cáo sai lệch</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Ghi nhận các trường hợp sai lệch hàng hóa.
+            </p>
+        </field>
+    </record>
+</odoo>

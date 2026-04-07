@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_promotion_form" model="ir.ui.view">
+        <field name="name">mer.promotion.form</field>
+        <field name="model">mer.promotion</field>
+        <field name="arch" type="xml">
+            <form string="Chương trình Khuyến mãi">
+                <header>
+                    <button name="action_activate" string="Kích hoạt" type="object" invisible="state != 'draft'" class="btn-primary"/>
+                    <button name="action_expire" string="Kết thúc" type="object" invisible="state != 'active'"/>
+                    <field name="state" widget="statusbar"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name" string="Tên chương trình"/>
+                        <h1><field name="name" placeholder="Ví dụ: Giảm giá mùa hè"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code"/>
+                            <field name="discount_rate"/>
+                            <field name="target_store_ids" widget="many2many_tags" placeholder="Chọn chi nhánh/cửa hàng..."/>
+                        </group>
+                        <group>
+                            <field name="date_start"/>
+                            <field name="date_end"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Mô tả" name="description">
+                            <field name="description"/>
+                        </page>
+                        <page string="Sản phẩm áp dụng" name="products">
+                            <group>
+                                <label for="excel_template" string="Import từ file Excel"/>
+                                <div class="o_row">
+                                    <field name="excel_template" filename="excel_template_name" widget="binary"/>
+                                    <field name="excel_template_name" invisible="1"/>
+                                    <button name="action_import_excel" type="object" string="Chạy Import" class="btn-secondary" icon="fa-download" help="Đọc file Excel và nạp xuống bảng danh sách bên dưới."/>
+                                </div>
+                            </group>
+                            <field name="product_ids">
+                                <list>
+                                    <field name="default_code"/>
+                                    <field name="name"/>
+                                    <field name="lst_price"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_mer_promotion_tree" model="ir.ui.view">
+        <field name="name">mer.promotion.list</field>
+        <field name="model">mer.promotion</field>
+        <field name="arch" type="xml">
+            <list string="Chương trình Khuyến mãi">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="date_start"/>
+                <field name="date_end"/>
+                <field name="state" widget="badge" decoration-success="state == 'active'" decoration-info="state == 'draft'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_mer_promotion" model="ir.actions.act_window">
+        <field name="name">Khuyến mãi</field>
+        <field name="res_model">mer.promotion</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

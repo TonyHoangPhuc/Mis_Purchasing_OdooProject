@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="product_template_form_view_merchandise_inherit" model="ir.ui.view">
+        <field name="name">product.template.form.inherit.merchandise</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <!-- Sử dụng XPath trực tiếp vào field chuẩn để đảm bảo tính tương thích -->
+            <!-- Chèn vào sau cụm Purchase (bao gồm cả ô tick và nhãn) để không làm lệch giao diện -->
+            <xpath expr="//div[@name='options']" position="inside">
+                <span class="d-inline-block">
+                    <field name="x_mer_stop_ordering"/>
+                    <label for="x_mer_stop_ordering"/>
+                </span>
+            </xpath>
+            <!-- Thêm thẻ Khuyến mãi ngay dưới Giá Bán ở màn hình chính -->
+            <xpath expr="//field[@name='list_price']" position="after">
+                <field name="current_promotion_price" widget="monetary" invisible="current_promotion_price == 0" class="text-success" string="Giá Sale"/>
+            </xpath>
+            <!-- Thêm vào tab Inventory -->
+            <xpath expr="//page[@name='inventory']" position="inside">
+                <group string="Cấu hình Merchandise">
+                    <field name="x_mer_stock_status" decoration-danger="x_mer_stock_status == 'understock'" decoration-warning="x_mer_stock_status == 'overstock'"/>
+                    <field name="current_promotion_price" widget="monetary"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="product_template_tree_view_merchandise_inherit" model="ir.ui.view">
+        <field name="name">product.template.list.inherit.merchandise</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_tree_view"/>
+        <field name="arch" type="xml">
+            <!-- Với view kế thừa, không dùng thẻ <list> bao quanh xpath -->
+            <xpath expr="//field[@name='name']" position="after">
+                <field name="x_mer_stock_status" widget="badge" decoration-warning="x_mer_stock_status == 'overstock'" decoration-danger="x_mer_stock_status == 'understock'"/>
+                <field name="x_mer_stop_ordering" widget="boolean_toggle"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
