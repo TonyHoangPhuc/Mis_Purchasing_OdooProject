@@ -10,8 +10,6 @@ class MerDiscrepancyReport(models.Model):
     
     state = fields.Selection([
         ('draft', 'Mới'),
-        ('reporting', 'Đang báo cáo'),
-        ('solving', 'Đang giải quyết'),
         ('done', 'Hoàn tất'),
         ('cancel', 'Hủy')
     ], string='Trạng thái', default='draft', tracking=True)
@@ -20,7 +18,6 @@ class MerDiscrepancyReport(models.Model):
     
     user_id = fields.Many2one('res.users', string='Người báo cáo', default=lambda self: self.env.user)
     
-    picking_id = fields.Many2one('stock.picking', string='Phiếu kho liên quan')
     purchase_id = fields.Many2one('purchase.order', string='Đơn mua hàng liên quan')
     replenishment_po_id = fields.Many2one('purchase.order', string='PO bù hàng', readonly=True, tracking=True)
     return_picking_id = fields.Many2one('stock.picking', string='Phiếu thu hồi', readonly=True, tracking=True)
@@ -44,19 +41,36 @@ class MerDiscrepancyReport(models.Model):
         for vals in vals_list:
             if vals.get('name', _('New')) == _('New'):
                 vals['name'] = self.env['ir.sequence'].next_by_code('mer.discrepancy.report') or _('New')
-        return super(MerDiscrepancyReport, self).create(vals_list)
+        
+        records = super(MerDiscrepancyReport, self).create(vals_list)
+        
+        return records
+
+    def write(self, vals):
+        res = super(MerDiscrepancyReport, self).write(vals)
+        return res
+
+    warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
+
+    @api.onchange('purchase_id')
+    def _onchange_purchase_id(self):
+        if self.purchase_id and self.purchase_id.picking_type_id.warehouse_id:
+            self.warehouse_id = self.purchase_id.picking_type_id.warehouse_id.id
+
+    @api.onchange('expected_qty', 'actual_qty')
+    def _onchange_qty_reason(self):
+        if self.actual_qty > self.expected_qty:
+            self.reason = 'overage'
+        elif self.actual_qty < self.expected_qty:
+            self.reason = 'shortage'
+        else:
+            self.reason = False
 
     @api.depends('expected_qty', 'actual_qty')
     def _compute_difference(self):
         for record in self:
             record.difference_qty = record.actual_qty - record.expected_qty
 
-    def action_confirm_report(self):
-        self.write({'state': 'reporting'})
-
-    def action_start_solving(self):
-        self.write({'state': 'solving'})
-        
     def action_done(self):
         for report in self:
             report.message_post(
@@ -66,28 +80,36 @@ class MerDiscrepancyReport(models.Model):
             )
         self.write({'state': 'done'})
 
+    @api.constrains('expected_qty', 'actual_qty', 'reason')
+    def _check_qty_reason_consistency(self):
+        for record in self:
+            if record.actual_qty > record.expected_qty and record.reason == 'shortage':
+                raise UserError(_("Logic sai lệch không khớp: Số lượng thực tế lớn hơn chứng từ thì lý do phải là Hàng dư."))
+            if record.actual_qty < record.expected_qty and record.reason == 'overage':
+                raise UserError(_("Logic sai lệch không khớp: Số lượng thực tế nhỏ hơn chứng từ thì lý do phải là Hàng thiếu."))
+
     def action_create_replenishment_po(self):
         self.ensure_one()
+        # Kiểm tra logic lại một lần nữa trước khi tạo
+        if self.actual_qty > self.expected_qty:
+            self.reason = 'overage'
+        elif self.actual_qty < self.expected_qty:
+            self.reason = 'shortage'
+            
+        if self.state != 'draft':
+            raise UserError(_("Bạn chỉ có thể tạo PO bù hàng khi báo cáo đang ở trạng thái Nháp."))
+        
+        if not self.purchase_id:
+            raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (Source PO) trước khi tạo PO bù hàng."))
+
         if self.reason != 'shortage':
-            raise UserError(_("Chỉ có thể tạo PO bù hàng cho trường hợp Hàng thiếu."))
+            raise UserError(_("Lý do hiện tại là %s. Chỉ có thể tạo PO bù hàng cho trường hợp Hàng thiếu.") % dict(self._fields['reason'].selection).get(self.reason))
         
         if self.replenishment_po_id:
             raise UserError(_("Báo cáo này đã tạo PO bù hàng trước đó."))
 
         # Xác định nơi nhận đơn bù thiếu (Kho tổng hay Nhà cung cấp)
-        partner_id = False
-        if self.product_id.x_mer_supply_route == 'warehouse':
-            partner_id = self.env.company.partner_id.id
-        else:
-            if self.purchase_id and self.purchase_id.partner_id:
-                partner_id = self.purchase_id.partner_id.id
-            else:
-                seller = self.product_id.seller_ids[:1]
-                if seller:
-                    partner_id = seller.partner_id.id
-
-        if not partner_id:
-            raise UserError(_("Không xác định được nơi nhận đơn bù thiếu (Kho tổng hoặc Nhà cung cấp). Vui lòng kiểm tra lại cấu hình Luồng cung ứng trên sản phẩm."))
+        partner_id = self.purchase_id.partner_id.id
 
         qty_to_order = abs(self.difference_qty)
         if qty_to_order <= 0:
@@ -107,15 +129,48 @@ class MerDiscrepancyReport(models.Model):
             })]
         }
         
-        po = self.env['purchase.order'].create(purchase_vals)
+        po = self.env['purchase.order'].sudo().create(purchase_vals)
         self.write({
             'replenishment_po_id': po.id,
             'state': 'done',
             'solution_notes': f"Đã tự động xử lý Hàng thiếu: Sinh Đơn mua hàng (PO) bù số lượng: {po.name}"
         })
         
-        self.message_post(body=_("Đã tự động tạo PO bù hàng và Hoàn tất báo cáo: <a href='#' data-oe-model='purchase.order' data-oe-id='%s'>%s</a>") % (po.id, po.name))
-
+        # Gửi thông báo chi tiết cho Kho/Đối tác
+        if partner_id:
+            from markupsafe import Markup
+            
+            message_body = Markup(
+                "<div style='background-color: #eff6ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 4px; font-family: sans-serif;'>"
+                    "<h3 style='margin-top: 0; color: #1e40af; border-bottom: 1px solid #bfdbfe; padding-bottom: 8px;'>🛒 %s</h3>"
+                    "<p style='color: #1e3a8a; margin: 10px 0;'>"
+                        "Chào bộ phận Kho, hệ thống ghi nhận một yêu cầu <b>Bù hàng thiếu</b> từ Merchandise:"
+                    "</p>"
+                    "<ul style='list-style: none; padding: 0; margin: 10px 0; color: #1e3a8a; line-height: 1.6;'>"
+                        "<li><b>🔢 %s:</b> %s</li>"
+                        "<li><b>📦 %s:</b> %s</li>"
+                        "<li><b>➕ %s:</b> <span style='font-size: 1.1em; color: #2563eb;'>%s</span></li>"
+                    "</ul>"
+                    "<p style='margin-bottom: 0; font-style: italic; color: #1e40af; font-size: 0.9em; border-top: 1px dashed #bfdbfe; padding-top: 8px;'>"
+                        "💡 <i>Vui lòng chuẩn bị hàng và giao bù cho Cửa hàng sớm nhất!</i>"
+                    "</p>"
+                "</div>"
+            ) % (
+                _("THÔNG BÁO BÙ HÀNG THIẾU (PO BÙ)"),
+                _("Mã PO bù"), po.name,
+                _("Sản phẩm"), self.product_id.display_name,
+                _("Số lượng bù"), qty_to_order,
+            )
+            
+            # Đưa Kho vào danh sách theo dõi và bắn tin nhắn
+            self.message_subscribe(partner_ids=[partner_id])
+            self.message_post(
+                body=message_body,
+                message_type='comment',
+                subtype_xmlid='mail.mt_comment',
+                partner_ids=[partner_id]
+            )
+        
         return {
             'type': 'ir.actions.act_window',
             'res_model': 'purchase.order',
@@ -126,85 +181,59 @@ class MerDiscrepancyReport(models.Model):
 
     def action_create_return_picking(self):
         self.ensure_one()
+        # Kiểm tra logic lại một lần nữa trước khi tạo
+        if self.actual_qty > self.expected_qty:
+            self.reason = 'overage'
+        elif self.actual_qty < self.expected_qty:
+            self.reason = 'shortage'
+
+        if self.state != 'draft':
+            raise UserError(_("Bạn chỉ có thể tạo Phiếu thu hồi khi báo cáo đang ở trạng thái Nháp."))
+        
+        if not self.purchase_id:
+            raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (Source PO) trước khi tạo phiếu thu hồi."))
+
         if self.reason != 'overage':
-            raise UserError(_("Chỉ có thể tạo Phiếu thu hồi cho trường hợp Hàng dư."))
+            raise UserError(_("Lý do hiện tại là %s. Chỉ có thể tạo Phiếu thu hồi cho trường hợp Hàng dư.") % dict(self._fields['reason'].selection).get(self.reason))
             
         if self.return_picking_id:
             raise UserError(_("Báo cáo này đã tạo Phiếu thu hồi trước đó."))
 
-        # Xác định Partner, Picking Type và Locations
-        partner_id = False
-        picking_type = False
-        location_source_id = False
-        location_dest_id = False
-        
-        # 1. Ưu tiên lấy thông tin từ phiếu gốc nếu có
-        if self.picking_id:
-            location_source_id = self.picking_id.location_dest_id.id
-            location_dest_id = self.picking_id.location_id.id
-            
-            # Lấy đích danh Đối tác (Partner) là Kho tổng hoặc Nhà cung cấp đã gửi từ phiếu gốc
-            if self.picking_id.partner_id:
-                partner_id = self.picking_id.partner_id.id
-            
-            if self.picking_id.picking_type_id.return_picking_type_id:
-                picking_type = self.picking_id.picking_type_id.return_picking_type_id
-            else:
-                picking_type = self.picking_id.picking_type_id
-                
-        # Thử tìm Warehouse từ phiếu gốc
-        warehouse = self.picking_id.picking_type_id.warehouse_id if self.picking_id else False
+        # Xác định Partner
+        partner_id = self.purchase_id.partner_id.id if self.purchase_id else False
+
+        # Thử tìm Warehouse từ báo cáo
+        warehouse = self.warehouse_id
 
         if self.product_id.x_mer_supply_route == 'warehouse':
-            if not partner_id:
-                partner_id = self.env.company.partner_id.id
-            if not picking_type:
-                domain = [('code', '=', 'internal')]
-                if warehouse:
-                    picking_type = self.env['stock.picking.type'].search(domain + [('warehouse_id', '=', warehouse.id)], limit=1)
-                
-                if not picking_type:
-                    picking_type = self.env['stock.picking.type'].search(domain + ['|', ('company_id', '=', self.env.company.id), ('company_id', '=', False)], limit=1)
-                
-                if not picking_type:
-                    picking_type = self.env['stock.picking.type'].search(domain, limit=1)
-                
-            if not location_dest_id:
-                location_dest_id = picking_type.default_location_dest_id.id if picking_type else False
+            # Trả về Kho tổng: Dùng loại hình Nội bộ mặc định của Kho
+            picking_type = warehouse.int_type_id
+            location_source_id = picking_type.default_location_src_id.id if picking_type else warehouse.lot_stock_id.id
+            location_dest_id = picking_type.default_location_dest_id.id if picking_type else self.env.company.partner_id.property_stock_customer.id
         else:
-            if not partner_id:
-                if self.purchase_id and self.purchase_id.partner_id:
-                    partner_id = self.purchase_id.partner_id.id
-                else:
-                    seller = self.product_id.seller_ids[:1]
-                    partner_id = seller.partner_id.id if seller else False
+            # Trả về Nhà cung cấp: Dùng loại hình Xuất hàng mặc định của Kho
+            picking_type = warehouse.out_type_id
             
+            # Fallback nếu kho không có out_type (hiếm gặp)
             if not picking_type:
-                domain = [('code', '=', 'outgoing')]
-                if warehouse:
-                    picking_type = self.env['stock.picking.type'].search(domain + [('warehouse_id', '=', warehouse.id)], limit=1)
+                picking_type = self.env['stock.picking.type'].sudo().search([
+                    ('code', '=', 'outgoing'),
+                    ('warehouse_id', '=', warehouse.id)
+                ], limit=1)
 
-                if not picking_type:
-                    picking_type = self.env['stock.picking.type'].search(domain + ['|', ('company_id', '=', self.env.company.id), ('company_id', '=', False)], limit=1)
-                
-                if not picking_type:
-                    picking_type = self.env['stock.picking.type'].search(domain, limit=1)
-                    
-                # Bổ sung: fallback nếu không có outgoing picking type (VD: hệ thống không cài app Bán Hàng)
-                if not picking_type:
-                    domain = [('code', '=', 'incoming')]
-                    picking_type = self.env['stock.picking.type'].search(domain + ['|', ('company_id', '=', self.env.company.id), ('company_id', '=', False)], limit=1)
-                    if not picking_type:
-                        picking_type = self.env['stock.picking.type'].search(domain, limit=1)
-                
-            if not location_dest_id:
-                location_dest_id = self.env.ref('stock.stock_location_suppliers').id
+            location_source_id = warehouse.lot_stock_id.id
+            location_dest_id = self.env.ref('stock.stock_location_suppliers', raise_if_not_found=False)
+            location_dest_id = location_dest_id.id if location_dest_id else (picking_type.default_location_dest_id.id if picking_type else False)
 
-        if not partner_id:
-            raise UserError(_("Không xác định được nơi nhận hàng (Kho tổng hoặc Nhà cung cấp)."))
-            
         if not picking_type:
-            raise UserError(_("Không tìm thấy Loại Hình Giao Nhận (Picking Type) phù hợp cho việc trả hàng trong hệ thống kho. Vui lòng kiểm tra lại cấu hình Kho."))
+            # Nếu vẫn không thấy, lấy bất kỳ loại hình nào có code là outgoing/internal trong công ty
+            picking_type = self.env['stock.picking.type'].sudo().search([
+                ('code', 'in', ['outgoing', 'internal']),
+                ('company_id', '=', self.env.company.id)
+            ], limit=1)
+
+        if not picking_type:
+            raise UserError(_("Hệ thống không tìm thấy Loại hình giao nhận nào để tạo phiếu. Vui lòng kiểm tra lại cấu hình kho của Cửa hàng này."))
 
         qty_to_return = abs(self.difference_qty)
         if qty_to_return <= 0:
@@ -224,7 +253,7 @@ class MerDiscrepancyReport(models.Model):
             'location_dest_id': location_dest_id,
             'origin': f"Thu hồi dư - Báo cáo {self.name}",
             'move_ids': [(0, 0, {
-                'name': self.product_id.name,
+                'description_picking': self.product_id.name,
                 'product_id': self.product_id.id,
                 'product_uom_qty': qty_to_return,
                 'product_uom': self.product_id.uom_id.id,
@@ -233,8 +262,8 @@ class MerDiscrepancyReport(models.Model):
             })]
         }
         
-        new_picking = self.env['stock.picking'].create(picking_vals)
-        new_picking.action_confirm() # Xác nhận để vào trạng thái Chờ xử lý
+        new_picking = self.env['stock.picking'].sudo().create(picking_vals)
+        new_picking.sudo().action_confirm() # Xác nhận để vào trạng thái Chờ xử lý
 
         self.write({
             'return_picking_id': new_picking.id,
@@ -242,8 +271,41 @@ class MerDiscrepancyReport(models.Model):
             'solution_notes': f"Đã tự động tạo Phiếu kho yêu cầu thu hồi hàng dư: {new_picking.name}"
         })
         
-        self.message_post(body=_("Đã tự động tạo Yêu cầu thu hồi, hoàn tất báo cáo: <a href='#' data-oe-model='stock.picking' data-oe-id='%s'>%s</a>") % (new_picking.id, new_picking.name))
-
+        # Gửi thông báo cho Kho/Đối tác liên quan
+        if partner_id:
+            from markupsafe import Markup
+            
+            message_body = Markup(
+                "<div style='background-color: #fffbef; border-left: 5px solid #f59e0b; padding: 15px; border-radius: 4px; font-family: sans-serif;'>"
+                    "<h3 style='margin-top: 0; color: #92400e; border-bottom: 1px solid #fef3c7; padding-bottom: 8px;'>⚠️ %s</h3>"
+                    "<p style='color: #78350f; margin: 10px 0;'>"
+                        "Chào bộ phận Kho, hệ thống ghi nhận một yêu cầu <b>Thu hồi hàng dư</b> từ Merchandise:"
+                    "</p>"
+                    "<ul style='list-style: none; padding: 0; margin: 10px 0; color: #78350f; line-height: 1.6;'>"
+                        "<li><b>🚚 %s:</b> %s</li>"
+                        "<li><b>📦 %s:</b> %s</li>"
+                        "<li><b>➖ %s:</b> <span style='font-size: 1.1em; color: #d97706;'>%s</span></li>"
+                    "</ul>"
+                    "<p style='margin-bottom: 0; font-style: italic; color: #92400e; font-size: 0.9em; border-top: 1px dashed #fef3c7; padding-top: 8px;'>"
+                        "💡 <i>Vui lòng lên lịch thu hồi và đến Cửa hàng để mang hàng dư về!</i>"
+                    "</p>"
+                "</div>"
+            ) % (
+                _("THÔNG BÁO THU HỒI HÀNG DƯ"),
+                _("Mã Phiếu kho"), new_picking.name,
+                _("Sản phẩm"), self.product_id.display_name,
+                _("Số lượng thu hồi"), qty_to_return,
+            )
+            
+            # Thêm Kho vào danh sách theo dõi và bắn tin nhắn
+            self.message_subscribe(partner_ids=[partner_id])
+            self.message_post(
+                body=message_body,
+                message_type='comment',
+                subtype_xmlid='mail.mt_comment',
+                partner_ids=[partner_id]
+            )
+            
         return {
             'type': 'ir.actions.act_window',
             'res_model': 'stock.picking',

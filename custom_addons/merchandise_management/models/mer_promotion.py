@@ -15,17 +15,16 @@ class MerPromotion(models.Model):
     _inherit = ['mail.thread', 'mail.activity.mixin']
 
     name = fields.Char(string='Tên chương trình', required=True)
-    code = fields.Char(string='Mã khuyến mãi')
+    code = fields.Char(string='Mã khuyến mãi', required=True)
     
     state = fields.Selection([
         ('draft', 'Mới'),
         ('active', 'Đang chạy'),
-        ('expired', 'Hết hạn'),
-        ('cancel', 'Hủy')
+        ('expired', 'Hết hạn')
     ], string='Trạng thái', default='draft', tracking=True)
     
-    date_start = fields.Date(string='Ngày bắt đầu', default=fields.Date.today)
-    date_end = fields.Date(string='Ngày kết thúc')
+    date_start = fields.Date(string='Ngày bắt đầu', default=fields.Date.today, required=True)
+    date_end = fields.Date(string='Ngày kết thúc', required=True)
     
     description = fields.Text(string='Mô tả chi tiết')
     
@@ -33,7 +32,7 @@ class MerPromotion(models.Model):
     discount_rate = fields.Float(string='Mức giảm (%)')
     
     # Bổ sung các trường Mới
-    target_store_ids = fields.Many2many('res.partner', string='Cửa hàng áp dụng')
+    target_store_ids = fields.Many2many('stock.warehouse', string='Cửa hàng áp dụng')
     excel_template = fields.Binary(string='File Excel mẫu', attachment=True)
     excel_template_name = fields.Char(string='Tên file Excel')
 
@@ -85,51 +84,109 @@ class MerPromotion(models.Model):
         except Exception as e:
             raise UserError(_("Lỗi đọc file Excel: %s") % str(e))
 
+    @api.constrains('date_start', 'date_end')
+    def _check_dates(self):
+        for record in self:
+            if record.date_start and record.date_end and record.date_start > record.date_end:
+                raise UserError(_("Ngày bắt đầu không thể sau ngày kết thúc."))
+
+    def _update_product_prices(self):
+        """Hàm nội bộ để cập nhật giá và trạng thái dựa trên ngày hiện tại"""
+        today = fields.Date.today()
+        for promotion in self:
+            # Tự động chuyển trạng thái nếu đã quá hạn mà vẫn đang để 'active'
+            if promotion.state == 'active' and promotion.date_end and promotion.date_end < today:
+                promotion.state = 'expired'
+            
+            is_active_period = promotion.state == 'active' and promotion.date_start <= today and (not promotion.date_end or promotion.date_end >= today)
+            
+            for product in promotion.product_ids:
+                if is_active_period:
+                    discount_amount = product.lst_price * (promotion.discount_rate / 100.0)
+                    product.current_promotion_price = product.lst_price - discount_amount
+                else:
+                    product.current_promotion_price = 0.0
+
+    @api.model
+    def _run_promotion_scheduler(self):
+        """Hàm chạy định kỳ để quét và cập nhật trạng thái/giá khuyến mãi"""
+        today = fields.Date.today()
+        
+        # 1. Tự động kích hoạt các bản ghi 'Mới' (Draft) nếu đã đến ngày và đủ thông tin
+        draft_promotions = self.search([
+            ('state', '=', 'draft'),
+            ('date_start', '<=', today),
+            ('date_end', '>=', today)
+        ])
+        for promo in draft_promotions:
+            # Kiểm tra nhanh tính hợp lệ trước khi tự kích hoạt
+            if promo.code and promo.product_ids and promo.target_store_ids and promo.discount_rate > 0:
+                promo.action_activate() # Tận dụng hàm kích hoạt có sẵn (đã bao gồm gửi thông báo)
+
+        # 2. Tìm tất cả các chương trình active để cập nhật lại (bao gồm cả việc tự hết hạn)
+        active_promotions = self.search([('state', '=', 'active')])
+        active_promotions._update_product_prices()
+
+    def unlink(self):
+        """Cho phép xóa nếu không ở trạng thái 'Đang chạy'. Không xét ngày kết thúc."""
+        for record in self:
+            if record.state == 'active':
+                raise UserError(_("Không thể xóa: Chương trình '%s' đang ở trạng thái 'Đang chạy'. Bạn phải kết thúc nó trước.") % record.name)
+        return super(MerPromotion, self).unlink()
+
     def action_activate(self):
         for promotion in self:
-            # Chặn lỗi nếu chưa điền đủ thông tin
+            if not promotion.code:
+                raise UserError(_("Vui lòng nhập Mã khuyến mãi trước khi kích hoạt."))
             if not promotion.product_ids:
-                raise UserError(_("Bạn chưa chọn bất kỳ sản phẩm nào để áp dụng khuyến mãi!"))
+                raise UserError(_("Bạn chưa chọn bất kỳ sản phẩm nào!"))
             if not promotion.target_store_ids:
-                raise UserError(_("Vui lòng chọn ít nhất một Cửa hàng áp dụng để gửi thông báo!"))
+                raise UserError(_("Vui lòng chọn ít nhất một Cửa hàng áp dụng!"))
             if promotion.discount_rate <= 0:
                 raise UserError(_("Mức giảm giá phải lớn hơn 0%%!"))
+            
+            # Kiểm tra logic ngày tháng ngay tại đây
+            if promotion.date_start and promotion.date_end and promotion.date_start > promotion.date_end:
+                raise UserError(_("Lỗi ngày tháng: Ngày bắt đầu (%s) không thể sau ngày kết thúc (%s).") % (promotion.date_start, promotion.date_end))
 
             promotion.write({'state': 'active'})
             
-            for product in promotion.product_ids:
-                discount_amount = product.lst_price * (promotion.discount_rate / 100.0)
-                product.current_promotion_price = product.lst_price - discount_amount
+            # Kiểm tra và cập nhật giá/trạng thái ngay lập tức
+            promotion._update_product_prices()
+            
+            # Gửi thông báo
+            if promotion.state == 'active': # Chỉ gửi nếu chưa bị chuyển sang expired ngay
+                store_partners = promotion.target_store_ids.mapped('partner_id')
+                if store_partners:
+                    promotion.message_subscribe(partner_ids=store_partners.ids)
                     
-            # Tự động add các Cửa hàng vào danh sách Followers để họ nhận được Notification chuông đỏ
-            promotion.message_subscribe(partner_ids=promotion.target_store_ids.ids)
-            
-            # Gửi tin nhắn nội bộ ghim trên hệ thống tới đại diện Cửa hàng
-            message_body = _(
-                "THÔNG BÁO KHUYẾN MÃI MỚI\n"
-                "- Tên chương trình: %s\n"
-                "- Mã KM: %s\n"
-                "- Mức giảm: %s%%\n"
-                "- Thời hạn: Từ %s đến %s\n"
-                "Hệ thống đã cập nhật giá mới cho các sản phẩm liên quan. Vui lòng các Cửa hàng kiểm tra!"
-            ) % (
-                promotion.name, 
-                promotion.code or '---', 
-                promotion.discount_rate,
-                promotion.date_start,
-                promotion.date_end or 'Không thời hạn'
-            )
-            
-            promotion.message_post(
-                body=message_body,
-                message_type='comment', # Đổi sang comment để dễ theo dõi hơn
-                subtype_xmlid='mail.mt_comment',
-                partner_ids=promotion.target_store_ids.ids
-            )
+                    # Sử dụng Markup để Odoo không render các ký hiệu HTML thành văn bản thuần
+                    from markupsafe import Markup
+                    
+                    content = Markup(
+                        "<div style='background-color: #f0fdf4; border-left: 5px solid #22c55e; padding: 15px; border-radius: 4px; font-family: sans-serif;'>"
+                            "<h3 style='margin-top: 0; color: #166534; border-bottom: 1px solid #bbf7d0; padding-bottom: 8px;'>📢 %s</h3>"
+                            "<ul style='list-style: none; padding: 0; margin: 10px 0; color: #15803d; line-height: 1.6;'>"
+                                "<li><b>🏷️ %s:</b> %s</li>"
+                                "<li><b>🔢 %s:</b> %s</li>"
+                                "<li><b>📉 %s:</b> <span style='font-size: 1.1em; color: #16a34a;'>%s%%</span></li>"
+                                "<li><b>📅 %s:</b> Từ <span style='font-weight: bold;'>%s</span> đến <span style='font-weight: bold;'>%s</span></li>"
+                            "</ul>"
+                            "<p style='margin-bottom: 0; font-style: italic; color: #166534; font-size: 0.9em; border-top: 1px dashed #bbf7d0; pt: 8px;'>"
+                                "💡 <i>%s</i>"
+                            "</p>"
+                        "</div>"
+                    ) % (
+                        _("THÔNG BÁO KHUYẾN MÃI MỚI"),
+                        _("Tên chương trình"), promotion.name,
+                        _("Mã KM"), promotion.code or '---',
+                        _("Mức giảm"), promotion.discount_rate,
+                        _("Thời hạn"), promotion.date_start, promotion.date_end or _('Không thời hạn'),
+                        _("Lưu ý: Hệ thống sẽ tự động cập nhật giá mới cho các sản phẩm liên quan vào đúng ngày bắt đầu. Vui lòng các Cửa hàng kiểm tra!")
+                    )
+                    promotion.message_post(body=content, partner_ids=store_partners.ids)
 
     def action_expire(self):
         self.write({'state': 'expired'})
-        for promotion in self:
-            for product in promotion.product_ids:
-                product.current_promotion_price = 0.0
+        self._update_product_prices()
 

@@ -30,6 +30,7 @@ class MerPurchaseRequest(models.Model):
     user_id = fields.Many2one('res.users', string='Người tạo', default=lambda self: self.env.user, tracking=True)
     manager_id = fields.Many2one('res.users', string='Người phê duyệt', tracking=True)
     partner_id = fields.Many2one('res.partner', string='Kho tổng / Nhà cung cấp', required=True)
+    warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
     date_request = fields.Date(string='Ngày yêu cầu', default=fields.Date.today)
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')
@@ -105,7 +106,7 @@ class MerPurchaseRequest(models.Model):
                 'date_planned': fields.Datetime.now(),
             }))
             
-        purchase_id = self.env['purchase.order'].create(purchase_vals)
+        purchase_id = self.env['purchase.order'].sudo().create(purchase_vals)
         # Tự động Xác nhận đơn hàng (Confirm Order) luôn
         purchase_id.button_confirm()
         
@@ -113,16 +114,26 @@ class MerPurchaseRequest(models.Model):
 
         # Gửi thông báo cho Kho về đơn PO vừa được tạo
         if self.partner_id:
-            message_body = _(
-                "THÔNG BÁO ĐƠN MUA HÀNG (PO)\n"
-                "Chào %s, hệ thống ghi nhận một đơn mua hàng mới từ Merchandise:\n"
-                "- Mã PO: %s\n"
-                "- Nhà cung cấp: %s\n"
-                "Vui lòng tiếp nhận thông tin đơn hàng này!"
+            from markupsafe import Markup
+            
+            message_body = Markup(
+                "<div style='background-color: #f0fdf4; border-left: 5px solid #22c55e; padding: 15px; border-radius: 4px; font-family: sans-serif;'>"
+                    "<h3 style='margin-top: 0; color: #166534; border-bottom: 1px solid #bbf7d0; padding-bottom: 8px;'>📦 %s</h3>"
+                    "<p style='color: #15803d; margin: 10px 0;'>"
+                        "Chào bộ phận Kho, hệ thống ghi nhận một đơn mua hàng mới từ Merchandise:"
+                    "</p>"
+                    "<ul style='list-style: none; padding: 0; margin: 10px 0; color: #15803d; line-height: 1.6;'>"
+                        "<li><b>🔢 %s:</b> %s</li>"
+                        "<li><b>🏢 %s:</b> %s</li>"
+                    "</ul>"
+                    "<p style='margin-bottom: 0; font-style: italic; color: #166534; font-size: 0.9em; border-top: 1px dashed #bbf7d0; padding-top: 8px;'>"
+                        "💡 <i>Vui lòng chuẩn bị hàng và lên kế hoạch giao cho Cửa hàng sớm nhất!</i>"
+                    "</p>"
+                "</div>"
             ) % (
-                self.partner_id.name,
-                purchase_id.name, 
-                self.partner_id.name
+                _("THÔNG BÁO ĐƠN MUA HÀNG (PO) MỚI"),
+                _("Mã PO"), purchase_id.name,
+                _("Nhà cung cấp"), self.partner_id.name,
             )
             
             # Đưa Kho vào danh sách theo dõi và bắn tin nhắn

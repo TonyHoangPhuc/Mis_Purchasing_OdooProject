@@ -6,12 +6,9 @@
         <field name="arch" type="xml">
             <form string="Báo cáo sai lệch hàng hóa">
                 <header>
-                    <button name="action_confirm_report" string="Xác nhận báo cáo" type="object" class="btn-primary" invisible="state != 'draft'"/>
-                    <button name="action_start_solving" string="Đang giải quyết" type="object" class="btn-info" invisible="state != 'reporting'"/>
-                    <button name="action_done" string="Hoàn tất" type="object" class="btn-success" invisible="state != 'solving'"/>
-                    <button name="action_create_replenishment_po" string="Tạo PO bù hàng" type="object" class="btn-warning" invisible="reason != 'shortage' or replenishment_po_id != False"/>
-                    <button name="action_create_return_picking" string="Tạo phiếu thu hồi" type="object" class="btn-warning" invisible="reason != 'overage' or return_picking_id != False"/>
-                    <field name="state" widget="statusbar" statusbar_visible="draft,reporting,solving,done"/>
+                    <button name="action_create_replenishment_po" string="Tạo PO bù hàng" type="object" class="btn-primary" invisible="reason != 'shortage' or replenishment_po_id != False or state != 'draft'"/>
+                    <button name="action_create_return_picking" string="Tạo phiếu thu hồi" type="object" class="btn-primary" invisible="reason != 'overage' or return_picking_id != False or state != 'draft'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,done"/>
                 </header>
                 <sheet>
                     <div class="oe_title">
@@ -22,11 +19,11 @@
                     <group>
                         <group>
                             <field name="date_discrepancy"/>
+                            <field name="warehouse_id" required="1"/>
                             <field name="user_id" readonly="1"/>
                             <field name="reason"/>
                         </group>
                         <group>
-                            <field name="picking_id"/>
                             <field name="purchase_id"/>
                             <field name="replenishment_po_id" invisible="not replenishment_po_id"/>
                             <field name="return_picking_id" invisible="not return_picking_id"/>
@@ -60,9 +57,10 @@
             <list string="Báo cáo sai lệch hàng hóa">
                 <field name="name"/>
                 <field name="date_discrepancy"/>
+                <field name="warehouse_id"/>
                 <field name="product_id"/>
                 <field name="reason" widget="badge" decoration-danger="reason == 'shortage'" decoration-success="reason == 'overage'"/>
-                <field name="state" widget="badge" decoration-info="state == 'reporting'" decoration-success="state == 'done'"/>
+                <field name="state" widget="badge" decoration-info="state == 'draft'" decoration-success="state == 'done'"/>
             </list>
         </field>
     </record>

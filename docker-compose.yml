@@ -20,6 +20,7 @@ services:
     volumes:
       - ./custom_addons:/mnt/extra-addons
       - ./odoo_local.conf:/etc/odoo/odoo.conf
+      - odoo-data:/var/lib/odoo
     command: odoo -c /etc/odoo/odoo.conf
     environment:
       - HOST=db
@@ -36,3 +37,4 @@ services:
 
 volumes:
   odoo-db-data:
+  odoo-data:

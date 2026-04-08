@@ -36,6 +36,7 @@
                     <group>
                         <group>
                             <field name="user_id" readonly="1"/>
+                            <field name="warehouse_id" required="1"/>
                             <field name="partner_id" required="1"/>
                             <field name="date_request"/>
                         </group>
@@ -66,6 +67,7 @@
         <field name="arch" type="xml">
             <list string="Yêu cầu mua hàng Merchandise">
                 <field name="name"/>
+                <field name="warehouse_id"/>
                 <field name="user_id"/>
                 <field name="date_request"/>
                 <field name="state" widget="badge" decoration-info="state == 'submitted'" decoration-success="state == 'approved'" decoration-warning="state == 'po_created'"/>
