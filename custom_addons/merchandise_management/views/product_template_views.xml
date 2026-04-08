@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Giao diện Form: Thêm cấu hình Merchandise -->
+    <!-- Form: Cấu hình Merchandise -->
     <record id="product_template_form_view_merchandise_inherit" model="ir.ui.view">
         <field name="name">product.template.form.inherit.merchandise</field>
         <field name="model">product.template</field>
@@ -19,13 +19,12 @@
                 <group string="Cấu hình Merchandise">
                     <field name="x_mer_supply_route" widget="radio" options="{'horizontal': true}"/>
                     <field name="x_mer_stock_status" decoration-danger="x_mer_stock_status == 'understock'" decoration-warning="x_mer_stock_status == 'overstock'"/>
-                    <field name="current_promotion_price" widget="monetary"/>
                 </group>
             </xpath>
         </field>
     </record>
 
-    <!-- Giao diện Danh sách (Tree): Cải tiến cột thông tin -->
+    <!-- List: Cột thông tin Merchandise -->
     <record id="product_template_tree_view_merchandise_inherit" model="ir.ui.view">
         <field name="name">product.template.list.inherit.merchandise</field>
         <field name="model">product.template</field>
@@ -47,13 +46,13 @@
         </field>
     </record>
 
-    <!-- Giao diện Kanban: 5 hàng dọc Merchandise -->
+    <!-- Kanban: Giao diện Merchandise -->
     <record id="product_template_kanban_view_merchandise_inherit" model="ir.ui.view">
         <field name="name">product.template.kanban.inherit.merchandise</field>
         <field name="model">product.template</field>
         <field name="inherit_id" ref="product.product_template_kanban_view"/>
         <field name="arch" type="xml">
-            <!-- Nạp dữ liệu bổ sung -->
+            <!-- Load dữ liệu bổ sung -->
             <xpath expr="//templates" position="before">
                 <field name="default_code"/>
                 <field name="qty_available"/>
@@ -64,7 +63,7 @@
                 <field name="currency_id" invisible="1"/>
             </xpath>
             
-            <!-- Thay thế toàn bộ nội dung chính bằng cấu trúc 5 hàng dọc -->
+            <!-- Cấu trúc 5 hàng dọc -->
             <xpath expr="//main" position="replace">
                 <main style="display: block !important; width: 100% !important;">
                     <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 3px;">

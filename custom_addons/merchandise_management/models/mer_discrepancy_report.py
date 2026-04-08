@@ -1,6 +1,7 @@
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
 
+# Quản lý sai lệch giữa hàng thực tế và chứng từ PO
 class MerDiscrepancyReport(models.Model):
     _name = 'mer.discrepancy.report'
     _description = 'Báo cáo sai lệch hàng hóa'
@@ -36,27 +37,23 @@ class MerDiscrepancyReport(models.Model):
     
     warehouse_partner_id = fields.Many2one('res.partner', string='Bộ phận Kho tiếp nhận')
 
+    # Sinh mã báo cáo theo sequence khi tạo mới
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
             if vals.get('name', _('New')) == _('New'):
                 vals['name'] = self.env['ir.sequence'].next_by_code('mer.discrepancy.report') or _('New')
-        
-        records = super(MerDiscrepancyReport, self).create(vals_list)
-        
-        return records
-
-    def write(self, vals):
-        res = super(MerDiscrepancyReport, self).write(vals)
-        return res
+        return super(MerDiscrepancyReport, self).create(vals_list)
 
     warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
 
+    # Cập nhật Cửa hàng dựa trên PO được chọn
     @api.onchange('purchase_id')
     def _onchange_purchase_id(self):
         if self.purchase_id and self.purchase_id.picking_type_id.warehouse_id:
             self.warehouse_id = self.purchase_id.picking_type_id.warehouse_id.id
 
+    # Gợi ý lý do dư/thiếu dựa trên số lượng thực tế
     @api.onchange('expected_qty', 'actual_qty')
     def _onchange_qty_reason(self):
         if self.actual_qty > self.expected_qty:
@@ -66,11 +63,13 @@ class MerDiscrepancyReport(models.Model):
         else:
             self.reason = False
 
+    # Tính số lượng chênh lệch thực tế vs chứng từ
     @api.depends('expected_qty', 'actual_qty')
     def _compute_difference(self):
         for record in self:
             record.difference_qty = record.actual_qty - record.expected_qty
 
+    # Xác nhận hoàn tất báo cáo thủ công
     def action_done(self):
         for report in self:
             report.message_post(
@@ -80,6 +79,7 @@ class MerDiscrepancyReport(models.Model):
             )
         self.write({'state': 'done'})
 
+    # Kiểm tra tính đúng đắn giữa số lượng và lý do
     @api.constrains('expected_qty', 'actual_qty', 'reason')
     def _check_qty_reason_consistency(self):
         for record in self:
@@ -88,6 +88,7 @@ class MerDiscrepancyReport(models.Model):
             if record.actual_qty < record.expected_qty and record.reason == 'overage':
                 raise UserError(_("Logic sai lệch không khớp: Số lượng thực tế nhỏ hơn chứng từ thì lý do phải là Hàng thiếu."))
 
+    # Tạo PO bù hàng thiếu
     def action_create_replenishment_po(self):
         self.ensure_one()
         # Kiểm tra logic lại một lần nữa trước khi tạo
@@ -108,7 +109,7 @@ class MerDiscrepancyReport(models.Model):
         if self.replenishment_po_id:
             raise UserError(_("Báo cáo này đã tạo PO bù hàng trước đó."))
 
-        # Xác định nơi nhận đơn bù thiếu (Kho tổng hay Nhà cung cấp)
+        # Xác định đối tác nhận đơn (Kho tổng hoặc NCC)
         partner_id = self.purchase_id.partner_id.id
 
         qty_to_order = abs(self.difference_qty)
@@ -136,7 +137,7 @@ class MerDiscrepancyReport(models.Model):
             'solution_notes': f"Đã tự động xử lý Hàng thiếu: Sinh Đơn mua hàng (PO) bù số lượng: {po.name}"
         })
         
-        # Gửi thông báo chi tiết cho Kho/Đối tác
+        # Gửi thông báo Chatter cho Kho/NCC
         if partner_id:
             from markupsafe import Markup
             
@@ -162,7 +163,7 @@ class MerDiscrepancyReport(models.Model):
                 _("Số lượng bù"), qty_to_order,
             )
             
-            # Đưa Kho vào danh sách theo dõi và bắn tin nhắn
+        # Đăng ký theo dõi và gửi tin nhắn
             self.message_subscribe(partner_ids=[partner_id])
             self.message_post(
                 body=message_body,
@@ -179,6 +180,7 @@ class MerDiscrepancyReport(models.Model):
             'target': 'current',
         }
 
+    # Tạo phiếu thu hồi hàng dư
     def action_create_return_picking(self):
         self.ensure_one()
         # Kiểm tra logic lại một lần nữa trước khi tạo
@@ -199,22 +201,22 @@ class MerDiscrepancyReport(models.Model):
         if self.return_picking_id:
             raise UserError(_("Báo cáo này đã tạo Phiếu thu hồi trước đó."))
 
-        # Xác định Partner
+        # Xác định đối tác liên quan
         partner_id = self.purchase_id.partner_id.id if self.purchase_id else False
 
-        # Thử tìm Warehouse từ báo cáo
+        # Lấy thông tin Kho/Cửa hàng
         warehouse = self.warehouse_id
 
         if self.product_id.x_mer_supply_route == 'warehouse':
-            # Trả về Kho tổng: Dùng loại hình Nội bộ mặc định của Kho
+            # Trả Kho tổng: Dùng phiếu điều chuyển nội bộ
             picking_type = warehouse.int_type_id
             location_source_id = picking_type.default_location_src_id.id if picking_type else warehouse.lot_stock_id.id
             location_dest_id = picking_type.default_location_dest_id.id if picking_type else self.env.company.partner_id.property_stock_customer.id
         else:
-            # Trả về Nhà cung cấp: Dùng loại hình Xuất hàng mặc định của Kho
+            # Trả NCC: Dùng phiếu xuất hàng
             picking_type = warehouse.out_type_id
             
-            # Fallback nếu kho không có out_type (hiếm gặp)
+            # Dự phòng nếu thiếu cấu hình loại hình xuất
             if not picking_type:
                 picking_type = self.env['stock.picking.type'].sudo().search([
                     ('code', '=', 'outgoing'),
@@ -242,7 +244,7 @@ class MerDiscrepancyReport(models.Model):
         if not location_source_id:
             location_source_id = picking_type.default_location_src_id.id
             if not location_source_id:
-                # Nếu không xác định được location_source_id, thử lấy location từ warehouse
+            # Dự phòng lấy kho mặc định của công ty
                 wh = self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1)
                 location_source_id = wh.lot_stock_id.id if wh else False
 
@@ -263,7 +265,7 @@ class MerDiscrepancyReport(models.Model):
         }
         
         new_picking = self.env['stock.picking'].sudo().create(picking_vals)
-        new_picking.sudo().action_confirm() # Xác nhận để vào trạng thái Chờ xử lý
+        new_picking.sudo().action_confirm() # Xác nhận phiếu kho
 
         self.write({
             'return_picking_id': new_picking.id,
@@ -271,7 +273,7 @@ class MerDiscrepancyReport(models.Model):
             'solution_notes': f"Đã tự động tạo Phiếu kho yêu cầu thu hồi hàng dư: {new_picking.name}"
         })
         
-        # Gửi thông báo cho Kho/Đối tác liên quan
+        # Gửi thông báo Chatter cho Kho/NCC
         if partner_id:
             from markupsafe import Markup
             

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <!-- Form View: Ghi nhận và xử lý sai lệch hàng hóa -->
     <record id="view_mer_discrepancy_report_form" model="ir.ui.view">
         <field name="name">mer.discrepancy.report.form</field>
         <field name="model">mer.discrepancy.report</field>
@@ -18,25 +19,25 @@
                     </div>
                     <group>
                         <group>
-                            <field name="date_discrepancy"/>
-                            <field name="warehouse_id" required="1"/>
-                            <field name="user_id" readonly="1"/>
-                            <field name="reason"/>
+                            <field name="date_discrepancy" string="Ngày ghi nhận"/>
+                            <field name="warehouse_id" string="Cửa hàng" required="1"/>
+                            <field name="user_id" string="Người báo cáo" readonly="1"/>
+                            <field name="reason" string="Lý do"/>
                         </group>
                         <group>
-                            <field name="purchase_id"/>
-                            <field name="replenishment_po_id" invisible="not replenishment_po_id"/>
-                            <field name="return_picking_id" invisible="not return_picking_id"/>
+                            <field name="purchase_id" string="Đơn PO gốc"/>
+                            <field name="replenishment_po_id" string="PO bù hàng" invisible="not replenishment_po_id"/>
+                            <field name="return_picking_id" string="Phiếu thu hồi" invisible="not return_picking_id"/>
                         </group>
                     </group>
                     <group string="Chi tiết sai lệch">
                         <group>
-                            <field name="product_id"/>
-                            <field name="expected_qty"/>
+                            <field name="product_id" string="Sản phẩm"/>
+                            <field name="expected_qty" string="Số lượng chứng từ"/>
                         </group>
                         <group>
-                            <field name="actual_qty"/>
-                            <field name="difference_qty"/>
+                            <field name="actual_qty" string="Số lượng thực tế"/>
+                            <field name="difference_qty" string="Chênh lệch"/>
                         </group>
                     </group>
                     <notebook>
@@ -50,21 +51,23 @@
         </field>
     </record>
 
+    <!-- List View: Danh sách các báo cáo sai lệch -->
     <record id="view_mer_discrepancy_report_tree" model="ir.ui.view">
         <field name="name">mer.discrepancy.report.list</field>
         <field name="model">mer.discrepancy.report</field>
         <field name="arch" type="xml">
             <list string="Báo cáo sai lệch hàng hóa">
-                <field name="name"/>
-                <field name="date_discrepancy"/>
-                <field name="warehouse_id"/>
-                <field name="product_id"/>
-                <field name="reason" widget="badge" decoration-danger="reason == 'shortage'" decoration-success="reason == 'overage'"/>
-                <field name="state" widget="badge" decoration-info="state == 'draft'" decoration-success="state == 'done'"/>
+                <field name="name" string="Mã báo cáo"/>
+                <field name="date_discrepancy" string="Ngày ghi nhận"/>
+                <field name="warehouse_id" string="Cửa hàng"/>
+                <field name="product_id" string="Sản phẩm"/>
+                <field name="reason" string="Lý do" widget="badge" decoration-danger="reason == 'shortage'" decoration-success="reason == 'overage'"/>
+                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'draft'" decoration-success="state == 'done'"/>
             </list>
         </field>
     </record>
 
+    <!-- Action: Điều hướng đến màn hình báo cáo sai lệch -->
     <record id="action_mer_discrepancy_report" model="ir.actions.act_window">
         <field name="name">Báo cáo sai lệch</field>
         <field name="res_model">mer.discrepancy.report</field>

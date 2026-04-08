@@ -9,6 +9,7 @@ except ImportError:
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
 
+# Quản lý chương trình khuyến mãi và tự động cập nhật giá
 class MerPromotion(models.Model):
     _name = 'mer.promotion'
     _description = 'Kế hoạch khuyến mãi Merchandise'
@@ -31,11 +32,12 @@ class MerPromotion(models.Model):
     product_ids = fields.Many2many('product.product', string='Sản phẩm áp dụng')
     discount_rate = fields.Float(string='Mức giảm (%)')
     
-    # Bổ sung các trường Mới
+    # Các trường mở rộng Merchandise
     target_store_ids = fields.Many2many('stock.warehouse', string='Cửa hàng áp dụng')
     excel_template = fields.Binary(string='File Excel mẫu', attachment=True)
     excel_template_name = fields.Char(string='Tên file Excel')
 
+    # Nhập SKU từ file Excel
     def action_import_excel(self):
         if not self.excel_template:
             raise UserError(_("Vui lòng tải lên file Excel trước khi bấm Nhập."))
@@ -50,9 +52,9 @@ class MerPromotion(models.Model):
             sheet = wb.active
             
             product_codes = []
-            # Đọc từ dòng 2 để bỏ qua tiêu đề ở dòng 1
+            # Bỏ qua tiêu đề (dòng 1)
             for row in sheet.iter_rows(min_row=2, values_only=True):
-                if row and row[0]: # Giả định Cột 1 là SKU (default_code)
+                if row and row[0]: # Cột 1 là SKU
                     product_codes.append(str(row[0]).strip())
                     
             if not product_codes:
@@ -63,10 +65,10 @@ class MerPromotion(models.Model):
             if not products:
                 raise UserError(_("Không tìm thấy bất kỳ sản phẩm nào có Mã SKU khớp với file tải lên."))
                 
-            # Đè danh sách sản phẩm mới vào
+            # Cập nhật danh sách sản phẩm mới
             self.product_ids = [(6, 0, products.ids)]
             
-            # Cảnh báo mã không tìm thấy
+            # Kiểm tra SKU không tồn tại
             found_codes = products.mapped('default_code')
             missing_codes = set(product_codes) - set(filter(None, found_codes))
             if missing_codes:
@@ -84,17 +86,18 @@ class MerPromotion(models.Model):
         except Exception as e:
             raise UserError(_("Lỗi đọc file Excel: %s") % str(e))
 
+    # Kiểm tra ngày bắt đầu/kết thúc
     @api.constrains('date_start', 'date_end')
     def _check_dates(self):
         for record in self:
             if record.date_start and record.date_end and record.date_start > record.date_end:
                 raise UserError(_("Ngày bắt đầu không thể sau ngày kết thúc."))
 
+    # Cập nhật giá sản phẩm theo ngày
     def _update_product_prices(self):
-        """Hàm nội bộ để cập nhật giá và trạng thái dựa trên ngày hiện tại"""
         today = fields.Date.today()
         for promotion in self:
-            # Tự động chuyển trạng thái nếu đã quá hạn mà vẫn đang để 'active'
+            # Hết hạn nếu quá ngày kết thúc
             if promotion.state == 'active' and promotion.date_end and promotion.date_end < today:
                 promotion.state = 'expired'
             
@@ -107,12 +110,12 @@ class MerPromotion(models.Model):
                 else:
                     product.current_promotion_price = 0.0
 
+    # Scheduler định kỳ cập nhật KM
     @api.model
     def _run_promotion_scheduler(self):
-        """Hàm chạy định kỳ để quét và cập nhật trạng thái/giá khuyến mãi"""
         today = fields.Date.today()
         
-        # 1. Tự động kích hoạt các bản ghi 'Mới' (Draft) nếu đã đến ngày và đủ thông tin
+        # Kích hoạt tự động các bản ghi mới đến ngày
         draft_promotions = self.search([
             ('state', '=', 'draft'),
             ('date_start', '<=', today),
@@ -123,17 +126,18 @@ class MerPromotion(models.Model):
             if promo.code and promo.product_ids and promo.target_store_ids and promo.discount_rate > 0:
                 promo.action_activate() # Tận dụng hàm kích hoạt có sẵn (đã bao gồm gửi thông báo)
 
-        # 2. Tìm tất cả các chương trình active để cập nhật lại (bao gồm cả việc tự hết hạn)
+        # Cập nhật giá cho các chương trình đang chạy
         active_promotions = self.search([('state', '=', 'active')])
         active_promotions._update_product_prices()
 
+    # Chỉ cho phép xóa khi chưa kích hoạt
     def unlink(self):
-        """Cho phép xóa nếu không ở trạng thái 'Đang chạy'. Không xét ngày kết thúc."""
         for record in self:
             if record.state == 'active':
                 raise UserError(_("Không thể xóa: Chương trình '%s' đang ở trạng thái 'Đang chạy'. Bạn phải kết thúc nó trước.") % record.name)
         return super(MerPromotion, self).unlink()
 
+    # Kích hoạt chương trình và gửi thông báo
     def action_activate(self):
         for promotion in self:
             if not promotion.code:
@@ -151,7 +155,7 @@ class MerPromotion(models.Model):
 
             promotion.write({'state': 'active'})
             
-            # Kiểm tra và cập nhật giá/trạng thái ngay lập tức
+            # Cập nhật giá sản phẩm ngay lập tức
             promotion._update_product_prices()
             
             # Gửi thông báo
@@ -160,7 +164,7 @@ class MerPromotion(models.Model):
                 if store_partners:
                     promotion.message_subscribe(partner_ids=store_partners.ids)
                     
-                    # Sử dụng Markup để Odoo không render các ký hiệu HTML thành văn bản thuần
+                    # Sử dụng Markup để render HTML
                     from markupsafe import Markup
                     
                     content = Markup(
@@ -186,7 +190,9 @@ class MerPromotion(models.Model):
                     )
                     promotion.message_post(body=content, partner_ids=store_partners.ids)
 
+    # Kết thúc sớm chương trình KM
     def action_expire(self):
+    # Kết thúc chương trình sớm và khôi phục giá gốc
         self.write({'state': 'expired'})
         self._update_product_prices()
 

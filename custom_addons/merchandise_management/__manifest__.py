@@ -11,9 +11,11 @@
         - Gửi PO cho Warehouse
         - Xử lý sai lệch hàng hóa
     """,
-    'category': 'Purchase',
+    'category': 'Merchandise Management', # Phân loại app trên dashboard
     'author': 'Your Name',
+    # Các module Odoo tiêu chuẩn cần cài đặt trước
     'depends': ['purchase', 'stock', 'product', 'uom', 'mail', 'purchase_stock'],
+    # Thứ tự nạp các file dữ liệu và giao diện
     'data': [
         'security/groups.xml',
         'security/ir.model.access.csv',
@@ -26,5 +28,5 @@
         'views/merchandise_menus.xml',
     ],
     'installable': True,
-    'application': True,
+    'application': True, # Đánh dấu là app chính trên Dashboard
 }

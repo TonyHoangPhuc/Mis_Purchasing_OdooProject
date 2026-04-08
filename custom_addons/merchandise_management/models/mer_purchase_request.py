@@ -4,12 +4,14 @@ from odoo.exceptions import UserError
 class MerPurchaseRequestLine(models.Model):
     _name = 'mer.purchase.request.line'
     _description = 'Chi tiết sản phẩm yêu cầu mua hàng'
+    # Lưu trữ danh sách sản phẩm cần mua
 
     request_id = fields.Many2one('mer.purchase.request', string='Yêu cầu')
     product_id = fields.Many2one('product.product', string='Sản phẩm', required=True)
     product_qty = fields.Float(string='Số lượng', default=1.0)
     product_uom_id = fields.Many2one('uom.uom', string='Đơn vị tính', related='product_id.uom_id')
 
+# Quy trình phê duyệt yêu cầu mua hàng (PR)
 class MerPurchaseRequest(models.Model):
     _name = 'mer.purchase.request'
     _description = 'Yêu cầu mua hàng Merchandise'
@@ -38,6 +40,7 @@ class MerPurchaseRequest(models.Model):
     purchase_id = fields.Many2one('purchase.order', string='Đơn mua hàng (PO)', readonly=True)
     notes = fields.Text(string='Ghi chú')
 
+    # Sinh mã PR theo sequence khi tạo mới
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
@@ -45,6 +48,7 @@ class MerPurchaseRequest(models.Model):
                 vals['name'] = self.env['ir.sequence'].next_by_code('mer.purchase.request') or _('New')
         return super(MerPurchaseRequest, self).create(vals_list)
 
+    # Gợi ý NCC/Kho tổng dựa trên sản phẩm đầu tiên
     @api.onchange('line_ids')
     def _onchange_line_ids(self):
         if self.line_ids and not self.partner_id:
@@ -55,30 +59,37 @@ class MerPurchaseRequest(models.Model):
                     if seller:
                         self.partner_id = seller.partner_id.id
                 else:
-                    # Giao từ Kho tổng -> Mặc định lấy theo Công ty
+                    # Giao từ Kho tổng mặc định lấy theo Công ty
                     self.partner_id = self.env.company.partner_id.id
 
+    # Gửi yêu cầu mua hàng
     def action_submit(self):
         for request in self:
             if not request.line_ids:
                 raise UserError(_("Bạn không thể gửi yêu cầu khi chưa chọn sản phẩm nào!"))
         self.write({'state': 'submitted'})
 
+    # Gửi lên Quản lý duyệt
     def action_send_to_manager(self):
         self.write({'state': 'to_approve'})
 
+    # Phê duyệt yêu cầu
     def action_approve(self):
         self.write({'state': 'approved', 'manager_id': self.env.user.id})
 
+    # Từ chối yêu cầu
     def action_reject(self):
         self.write({'state': 'rejected'})
 
+    # Đưa về bản nháp
     def action_draft(self):
         self.write({'state': 'draft'})
 
+    # Hủy yêu cầu
     def action_cancel(self):
         self.write({'state': 'cancel'})
 
+    # Tạo PO từ yêu cầu đã duyệt
     def action_create_po(self):
         if self.state != 'approved':
             raise UserError(_("Yêu cầu cần được phê duyệt trước khi tạo PO."))
@@ -107,12 +118,12 @@ class MerPurchaseRequest(models.Model):
             }))
             
         purchase_id = self.env['purchase.order'].sudo().create(purchase_vals)
-        # Tự động Xác nhận đơn hàng (Confirm Order) luôn
+        # Tự động xác nhận đơn hàng (Confirm Order)
         purchase_id.button_confirm()
         
         self.write({'purchase_id': purchase_id.id, 'state': 'po_created'})
 
-        # Gửi thông báo cho Kho về đơn PO vừa được tạo
+        # Gửi thông báo Chatter cho bộ phận Kho
         if self.partner_id:
             from markupsafe import Markup
             
@@ -136,7 +147,7 @@ class MerPurchaseRequest(models.Model):
                 _("Nhà cung cấp"), self.partner_id.name,
             )
             
-            # Đưa Kho vào danh sách theo dõi và bắn tin nhắn
+            # Gửi tin nhắn thông báo cho Kho
             self.message_subscribe(partner_ids=[self.partner_id.id])
             self.message_post(
                 body=message_body,

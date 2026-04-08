@@ -5,6 +5,15 @@
               web_icon="purchase,static/description/icon.png"
               sequence="10"/>
 
+    <!-- Ẩn menu Purchase gốc -->
+    <menuitem id="purchase.menu_purchase_root" active="False"/>
+
+    <menuitem id="menu_merchandise_purchase_orders"
+              name="Đơn mua hàng (PO)"
+              parent="menu_merchandise_root"
+              action="purchase.purchase_form_action"
+              sequence="5"/>
+
     <menuitem id="menu_merchandise_requests"
               name="Yêu cầu mua hàng (PR)"
               parent="menu_merchandise_root"

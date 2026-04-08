@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- 1. Định nghĩa List View riêng cho Chi tiết PR -->
+    <!-- List: Chi tiết sản phẩm PR -->
     <record id="view_mer_purchase_request_line_tree" model="ir.ui.view">
         <field name="name">mer.purchase.request.line.list</field>
         <field name="model">mer.purchase.request.line</field>
         <field name="arch" type="xml">
             <list string="Chi tiết sản phẩm" editable="bottom">
-                <field name="product_id"/>
-                <field name="product_qty"/>
-                <field name="product_uom_id" groups="uom.group_uom"/>
+                <field name="product_id" string="Sản phẩm"/>
+                <field name="product_qty" string="Số lượng"/>
+                <field name="product_uom_id" string="Đơn vị" groups="uom.group_uom"/>
             </list>
         </field>
     </record>
 
-    <!-- 2. Định nghĩa Form View chính cho PR và tham chiếu đến List View trên -->
+    <!-- Form: Yêu cầu mua hàng (PR) -->
     <record id="view_mer_purchase_request_form" model="ir.ui.view">
         <field name="name">mer.purchase.request.form</field>
         <field name="model">mer.purchase.request</field>
@@ -35,19 +35,19 @@
                     </div>
                     <group>
                         <group>
-                            <field name="user_id" readonly="1"/>
-                            <field name="warehouse_id" required="1"/>
-                            <field name="partner_id" required="1"/>
-                            <field name="date_request"/>
+                            <field name="user_id" string="Người tạo" readonly="1"/>
+                            <field name="warehouse_id" string="Cửa hàng" required="1"/>
+                            <field name="partner_id" string="Kho tổng / NCC" required="1"/>
+                            <field name="date_request" string="Ngày yêu cầu"/>
                         </group>
                         <group>
-                            <field name="manager_id" readonly="1"/>
-                            <field name="purchase_id" readonly="1" invisible="not purchase_id"/>
+                            <field name="manager_id" string="Người duyệt" readonly="1"/>
+                            <field name="purchase_id" string="Đơn PO liên quan" readonly="1" invisible="not purchase_id"/>
                         </group>
                     </group>
                     <notebook>
                         <page string="Sản phẩm" name="lines">
-                            <!-- Odoo tự động xử lý mapping ID nên không cần context active_id -->
+                            <!-- O2M: Chi tiết sản phẩm -->
                             <field name="line_ids" mode="list"/>
                         </page>
                         <page string="Ghi chú" name="notes">
@@ -60,17 +60,17 @@
         </field>
     </record>
 
-    <!-- 3. List View danh sách PR -->
+    <!-- List: Danh sách các PR -->
     <record id="view_mer_purchase_request_tree" model="ir.ui.view">
         <field name="name">mer.purchase.request.list</field>
         <field name="model">mer.purchase.request</field>
         <field name="arch" type="xml">
             <list string="Yêu cầu mua hàng Merchandise">
-                <field name="name"/>
-                <field name="warehouse_id"/>
-                <field name="user_id"/>
-                <field name="date_request"/>
-                <field name="state" widget="badge" decoration-info="state == 'submitted'" decoration-success="state == 'approved'" decoration-warning="state == 'po_created'"/>
+                <field name="name" string="Mã yêu cầu"/>
+                <field name="warehouse_id" string="Cửa hàng"/>
+                <field name="user_id" string="Người tạo"/>
+                <field name="date_request" string="Ngày yêu cầu"/>
+                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'submitted'" decoration-success="state == 'approved'" decoration-warning="state == 'po_created'"/>
             </list>
         </field>
     </record>
