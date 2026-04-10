@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_partner_form_inherit_supplier_management" model="ir.ui.view">
+        <field name="name">res.partner.form.inherit.supplier.management</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_supplier_purchase_orders"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-shopping-cart"
+                    invisible="not sm_show_supplier_performance"
+                >
+                    <field name="supplier_purchase_count" widget="statinfo" string="Đơn mua"/>
+                </button>
+                <button
+                    name="action_view_supplier_receipts"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-truck"
+                    invisible="not sm_show_supplier_performance"
+                >
+                    <field name="supplier_receipt_count" widget="statinfo" string="Phiếu nhập"/>
+                </button>
+            </xpath>
+            <xpath expr="//notebook" position="inside">
+                <page string="Hiệu suất nhà cung cấp" invisible="not sm_show_supplier_performance">
+                    <group>
+                        <group string="Giao hàng">
+                            <field name="lead_time_avg" readonly="1"/>
+                            <field name="on_time_delivery_rate" widget="progressbar" readonly="1"/>
+                            <field name="delivery_accuracy_rate" widget="progressbar" readonly="1"/>
+                        </group>
+                        <group string="Chất lượng">
+                            <field name="quality_score" widget="progressbar" readonly="1"/>
+                            <field name="supplier_rating"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_supplier_performance_tree" model="ir.ui.view">
+        <field name="name">res.partner.supplier.performance.tree</field>
+        <field name="model">res.partner</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+                <field name="supplier_rating"/>
+                <field name="lead_time_avg"/>
+                <field name="on_time_delivery_rate"/>
+                <field name="delivery_accuracy_rate"/>
+                <field name="quality_score"/>
+                <field name="supplier_purchase_count"/>
+                <field name="supplier_receipt_count"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_supplier_performance_search" model="ir.ui.view">
+        <field name="name">res.partner.supplier.performance.search</field>
+        <field name="model">res.partner</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <filter name="suppliers_only" string="Nhà cung cấp" domain="[('sm_show_supplier_performance', '=', True)]"/>
+                <filter name="low_otd" string="OTD thấp" domain="[('on_time_delivery_rate', '&lt;', 90)]"/>
+                <filter name="low_quality" string="Chất lượng thấp" domain="[('quality_score', '&lt;', 95)]"/>
+                <separator/>
+                <group>
+                    <filter name="group_rating" string="Xếp hạng" domain="[]" context="{'group_by': 'supplier_rating'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_supplier_performance" model="ir.actions.act_window">
+        <field name="name">Supplier Performance</field>
+        <field name="res_model">res.partner</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_supplier_performance_tree"/>
+        <field name="search_view_id" ref="view_supplier_performance_search"/>
+        <field name="domain">[('sm_show_supplier_performance', '=', True)]</field>
+        <field name="context">{'search_default_suppliers_only': 1}</field>
+    </record>
+
+    <menuitem
+        id="menu_supplier_root"
+        name="Supplier"
+        sequence="50"
+        groups="supplier_management.group_supplier_performance_user"
+    />
+    <menuitem
+        id="menu_supplier_performance"
+        name="Supplier Performance"
+        parent="supplier_management.menu_supplier_root"
+        action="supplier_management.action_supplier_performance"
+        sequence="10"
+        groups="supplier_management.group_supplier_performance_user"
+    />
+</odoo>

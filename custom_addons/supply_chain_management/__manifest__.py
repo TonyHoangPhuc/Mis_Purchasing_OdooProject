@@ -1,0 +1,20 @@
+{
+    "name": "Supply Chain Management",
+    "version": "19.0.1.0.0",
+    "summary": "Store allocation and replenishment planning",
+    "category": "Custom_Odoo",
+    "author": "OpenAI",
+    "license": "LGPL-3",
+    "depends": ["stock", "mail", "warehouse_management"],
+    "data": [
+        "security/supply_chain_security.xml",
+        "security/ir.model.access.csv",
+        "data/sequence_data.xml",
+        "views/res_partner_views.xml",
+        "views/allocation_rule_views.xml",
+        "views/allocation_plan_views.xml",
+        "views/stock_picking_views.xml",
+    ],
+    "installable": True,
+    "application": True,
+}
