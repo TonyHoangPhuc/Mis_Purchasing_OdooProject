@@ -5,8 +5,8 @@
             type="button"
             class="btn btn-link o_app_switcher_toggle"
             t-on-click="toggleAppSwitcher"
-            t-att-title="state.hidden ? 'Hiện thanh app' : 'Ẩn thanh app'"
-            aria-label="Toggle app switcher"
+            t-att-title="state.hidden ? 'Hiện thanh ứng dụng' : 'Ẩn thanh ứng dụng'"
+            aria-label="Bật hoặc tắt thanh ứng dụng"
         >
             <i t-att-class="state.hidden ? 'fa fa-eye' : 'fa fa-eye-slash'"/>
         </button>

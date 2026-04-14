@@ -17,7 +17,7 @@ class SupplyChainAllocationPlan(models.Model):
         string="Mã kế hoạch",
         required=True,
         copy=False,
-        default=lambda self: _("New"),
+        default=lambda self: _("Mới"),
         tracking=True,
     )
     warehouse_id = fields.Many2one(
@@ -88,8 +88,8 @@ class SupplyChainAllocationPlan(models.Model):
     def create(self, vals_list):
         sequence = self.env["ir.sequence"]
         for vals in vals_list:
-            if vals.get("name", _("New")) == _("New"):
-                vals["name"] = sequence.next_by_code("supply.chain.allocation.plan") or _("New")
+            if vals.get("name", _("Mới")) in (_("Mới"), _("New")):
+                vals["name"] = sequence.next_by_code("supply.chain.allocation.plan") or _("Mới")
         return super().create(vals_list)
 
     @api.depends("picking_ids")

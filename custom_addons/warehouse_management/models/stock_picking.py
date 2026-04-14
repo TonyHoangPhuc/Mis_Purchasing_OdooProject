@@ -5,12 +5,19 @@ from odoo.exceptions import UserError
 class StockPicking(models.Model):
     _inherit = "stock.picking"
 
+    mer_request_id = fields.Many2one(
+        "mer.purchase.request",
+        string="Yêu cầu Merchandise",
+        compute="_compute_mer_request_id",
+        compute_sudo=True,
+    )
+
     wm_qc_status = fields.Selection(
         [
             ("draft", "Nháp"),
             ("checking", "Đang kiểm tra"),
             ("passed", "Đạt"),
-            ("rejected", "Không đạt"),
+            ("rejected", "Hàng lỗi"),
         ],
         string="Trạng thái QC",
         default="draft",
@@ -69,6 +76,40 @@ class StockPicking(models.Model):
         for picking in self:
             picking.wm_is_incoming_receipt = picking.picking_type_code == "incoming"
 
+    @api.depends("purchase_id", "purchase_id.origin", "origin")
+    def _compute_mer_request_id(self):
+        requests_by_purchase = {}
+        purchase_ids = self.mapped("purchase_id").ids
+        if purchase_ids:
+            purchase_requests = self.env["mer.purchase.request"].sudo().search([("purchase_id", "in", purchase_ids)])
+            requests_by_purchase = {
+                request.purchase_id.id: request
+                for request in purchase_requests
+                if request.purchase_id
+            }
+
+        origins = {
+            origin
+            for origin in (
+                self.mapped("origin") + self.mapped("purchase_id.origin")
+            )
+            if origin
+        }
+        requests_by_name = {}
+        if origins:
+            requests_by_name = {
+                request.name: request
+                for request in self.env["mer.purchase.request"].sudo().search([("name", "in", list(origins))])
+            }
+
+        for picking in self:
+            request = requests_by_purchase.get(picking.purchase_id.id)
+            if not request and picking.purchase_id.origin:
+                request = requests_by_name.get(picking.purchase_id.origin)
+            if not request and picking.origin:
+                request = requests_by_name.get(picking.origin)
+            picking.mer_request_id = request
+
     @api.depends(
         "move_ids",
         "move_ids.product_uom_qty",
@@ -93,6 +134,10 @@ class StockPicking(models.Model):
         non_incoming = self.filtered(lambda picking: picking.picking_type_code != "incoming")
         if non_incoming:
             raise UserError("Chỉ phiếu nhập mới được thực hiện thao tác QC.")
+
+    def _has_wm_qc_issue_note(self):
+        self.ensure_one()
+        return bool(self.wm_qc_note or any(move.wm_damage_note for move in self.move_ids))
 
     def action_start_qc(self):
         self._check_wm_incoming_receipt()
@@ -122,9 +167,9 @@ class StockPicking(models.Model):
         self._check_wm_incoming_receipt()
         for picking in self:
             if picking.wm_qc_status != "checking":
-                raise UserError("Chỉ phiếu đang kiểm tra mới có thể đánh dấu không đạt.")
-            if not picking.wm_received_qty:
-                raise UserError("Cần nhập số lượng thực nhận trước khi xác nhận QC không đạt.")
+                raise UserError("Chỉ phiếu đang kiểm tra mới có thể đánh dấu hàng lỗi.")
+            if not picking._has_wm_qc_issue_note():
+                raise UserError("Cần nhập ghi chú lỗi trước khi xác nhận lô hàng không đạt.")
             picking.write(
                 {
                     "wm_qc_status": "rejected",

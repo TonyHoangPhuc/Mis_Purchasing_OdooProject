@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="merchandise_management.group_merchandise_user" model="res.groups">
+        <field name="implied_ids" eval="[(4, ref('base.group_user')), (4, ref('stock.group_stock_user')), (4, ref('purchase.group_purchase_user'))]"/>
+    </record>
+
+    <record id="merchandise_management.group_merchandise_manager" model="res.groups">
+        <field name="implied_ids" eval="[(4, ref('merchandise_management.group_merchandise_user')), (4, ref('purchase.group_purchase_manager'))]"/>
+        <field name="user_ids" eval="[(4, ref('base.user_admin'))]"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_root" model="ir.ui.menu">
+        <field name="name">Merchandise</field>
+        <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_requests" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_promotion" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_discrepancy" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_purchase_orders" model="ir.ui.menu">
+        <field name="active" eval="True"/>
+        <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_products" model="ir.ui.menu">
+        <field name="active" eval="False"/>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_config" model="ir.ui.menu">
+        <field name="active" eval="False"/>
+    </record>
+
+    <record id="purchase.menu_procurement_management" model="ir.ui.menu">
+        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
+        <field name="sequence" eval="20"/>
+    </record>
+
+    <record id="purchase.menu_purchase_products" model="ir.ui.menu">
+        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
+        <field name="sequence" eval="30"/>
+    </record>
+
+    <record id="purchase.purchase_report_main" model="ir.ui.menu">
+        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
+        <field name="sequence" eval="90"/>
+    </record>
+
+    <record id="purchase.menu_purchase_config" model="ir.ui.menu">
+        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
+        <field name="sequence" eval="100"/>
+    </record>
+
+    <record id="purchase.menu_purchase_root" model="ir.ui.menu">
+        <field name="active" eval="False"/>
+    </record>
+
+    <record id="view_picking_form_inherit_warehouse_management_mer" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.warehouse.management.mer</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="mer_request_id" readonly="1" invisible="not mer_request_id"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_receiving_qc_tree_inherit_mer" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.tree.inherit.mer</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_receiving_qc_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="mer_request_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_purchase_order_tree_inherit_wm_receipt_status" model="ir.ui.view">
+        <field name="name">purchase.order.tree.inherit.wm.receipt.status</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_view_tree"/>
+        <field name="arch" type="xml">
+            <field name="invoice_status" position="before">
+                <field
+                    name="wm_store_receipt_status"
+                    string="Trạng thái nhận hàng"
+                    widget="badge"
+                    optional="show"
+                    decoration-success="wm_store_receipt_status == 'received'"
+                    decoration-warning="wm_store_receipt_status == 'pending_qc'"
+                    decoration-danger="wm_store_receipt_status == 'defective'"
+                    decoration-muted="wm_store_receipt_status == 'no_receipt'"
+                />
+            </field>
+        </field>
+    </record>
+
+    <record id="view_purchase_order_form_inherit_wm_receipt_status" model="ir.ui.view">
+        <field name="name">purchase.order.form.inherit.wm.receipt.status</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='invoice_status']" position="before">
+                <field
+                    name="wm_store_receipt_status"
+                    widget="badge"
+                    invisible="state != 'purchase'"
+                    decoration-success="wm_store_receipt_status == 'received'"
+                    decoration-warning="wm_store_receipt_status == 'pending_qc'"
+                    decoration-danger="wm_store_receipt_status == 'defective'"
+                    decoration-muted="wm_store_receipt_status == 'no_receipt'"
+                />
+            </xpath>
+        </field>
+    </record>
+</odoo>

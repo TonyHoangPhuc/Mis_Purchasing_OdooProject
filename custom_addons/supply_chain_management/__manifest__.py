@@ -1,9 +1,9 @@
 {
     "name": "Supply Chain Management",
     "version": "19.0.1.0.0",
-    "summary": "Store allocation and replenishment planning",
+    "summary": "Lập kế hoạch phân bổ và bổ sung hàng cho cửa hàng",
     "category": "Custom_Odoo",
-    "author": "OpenAI",
+    "author": "Tony",
     "license": "LGPL-3",
     "depends": ["stock", "mail", "warehouse_management"],
     "data": [
@@ -12,8 +12,8 @@
         "data/sequence_data.xml",
         "views/res_partner_views.xml",
         "views/allocation_rule_views.xml",
-        "views/allocation_plan_views.xml",
         "views/stock_picking_views.xml",
+        "views/allocation_plan_views.xml",
     ],
     "installable": True,
     "application": True,

@@ -25,6 +25,13 @@
                     <field name="supplier_receipt_count" widget="statinfo" string="Phiếu nhập"/>
                 </button>
             </xpath>
+            <xpath expr="//notebook" position="before">
+                <group string="Phân loại đối tác">
+                    <group>
+                        <field name="is_supplier_contact"/>
+                    </group>
+                </group>
+            </xpath>
             <xpath expr="//notebook" position="inside">
                 <page string="Hiệu suất nhà cung cấp" invisible="not sm_show_supplier_performance">
                     <group>
@@ -67,7 +74,7 @@
             <search>
                 <field name="name"/>
                 <filter name="suppliers_only" string="Nhà cung cấp" domain="[('sm_show_supplier_performance', '=', True)]"/>
-                <filter name="low_otd" string="OTD thấp" domain="[('on_time_delivery_rate', '&lt;', 90)]"/>
+                <filter name="low_otd" string="Tỷ lệ đúng hạn thấp" domain="[('on_time_delivery_rate', '&lt;', 90)]"/>
                 <filter name="low_quality" string="Chất lượng thấp" domain="[('quality_score', '&lt;', 95)]"/>
                 <separator/>
                 <group>
@@ -78,7 +85,7 @@
     </record>
 
     <record id="action_supplier_performance" model="ir.actions.act_window">
-        <field name="name">Supplier Performance</field>
+        <field name="name">Hiệu suất nhà cung cấp</field>
         <field name="res_model">res.partner</field>
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="view_supplier_performance_tree"/>

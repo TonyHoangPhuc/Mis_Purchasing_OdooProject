@@ -5,6 +5,10 @@ from odoo.exceptions import ValidationError
 class StockMove(models.Model):
     _inherit = "stock.move"
 
+    wm_damage_note = fields.Char(
+        string="Ghi chú lỗi",
+        help="Mô tả ngắn tình trạng lỗi của lô hàng hoặc sản phẩm khi QC.",
+    )
     wm_damaged_qty = fields.Float(
         string="Số lượng hư hỏng",
         digits="Product Unit of Measure",

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="warehouse_management.menu_warehouse_root" model="ir.ui.menu">
+        <field name="name">Kho tổng</field>
+    </record>
+
+    <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
+        <field name="name">Nhập NCC và QC Kho tổng</field>
+        <field name="domain">[('picking_type_code', '=', 'incoming'), ('picking_type_id.warehouse_id.mis_role', '=', 'central')]</field>
+        <field name="context">{'search_default_incoming_only': 1}</field>
+    </record>
+
+    <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
+        <field name="name">Nhận NCC và QC</field>
+    </record>
+
+    <menuitem
+        id="menu_warehouse_central_check_requests"
+        name="Đơn cần kiểm hàng"
+        parent="warehouse_management.menu_warehouse_root"
+        action="store_management.action_central_stock_requests"
+        sequence="5"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <record id="view_receiving_qc_tree_inherit_store_context" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.tree.inherit.store.context</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_receiving_qc_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='name']" position="after">
+                <field name="store_receiving_store_id" optional="show"/>
+                <field name="store_route_label" optional="show"/>
+                <field name="store_source_party_display" optional="show"/>
+                <field name="mer_request_id" optional="show"/>
+                <field name="store_source_document_ref" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_receiving_qc_search_inherit_store_context" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.search.inherit.store.context</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_receiving_qc_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <filter
+                    name="route_supplier_to_store"
+                    string="NCC -> Cửa hàng"
+                    domain="[('store_route_type', '=', 'supplier_to_store')]"
+                />
+                <filter
+                    name="route_central_to_store"
+                    string="Kho tổng -> Cửa hàng"
+                    domain="[('store_route_type', '=', 'central_to_store')]"
+                />
+            </xpath>
+            <xpath expr="//group" position="inside">
+                <filter name="group_receiving_store" string="Cửa hàng nhận" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
+                <filter name="group_route" string="Nguồn hàng" domain="[]" context="{'group_by': 'store_route_type'}"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Sequence: Dãy số tự động cho Yêu cầu mua hàng (PR) -->
+    <record id="seq_mer_purchase_request" model="ir.sequence">
+        <field name="name">Yêu cầu mua hàng Merchandise</field>
+        <field name="code">mer.purchase.request</field>
+        <field name="prefix">PR/</field>
+        <field name="padding">5</field>
+        <field name="company_id" eval="False"/>
+    </record>
+
+    <!-- Sequence: Dãy số tự động cho Báo cáo sai lệch (DR) -->
+    <record id="seq_mer_discrepancy_report" model="ir.sequence">
+        <field name="name">Báo cáo sai lệch Merchandise</field>
+        <field name="code">mer.discrepancy.report</field>
+        <field name="prefix">DR/</field>
+        <field name="padding">5</field>
+        <field name="company_id" eval="False"/>
+    </record>
+</odoo>

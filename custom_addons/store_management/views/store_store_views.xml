@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_store_store_tree" model="ir.ui.view">
+        <field name="name">store.store.tree</field>
+        <field name="model">store.store</field>
+        <field name="arch" type="xml">
+            <list default_order="name asc">
+                <field name="name"/>
+                <field name="code"/>
+                <field name="responsible_user_id"/>
+                <field name="store_priority"/>
+                <field name="warehouse_id"/>
+                <field name="product_count"/>
+                <field name="replenishment_count"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_store_store_form" model="ir.ui.view">
+        <field name="name">store.store.form</field>
+        <field name="model">store.store</field>
+        <field name="arch" type="xml">
+            <form string="Cửa hàng">
+                <header>
+                    <button
+                        name="action_create_replenishment_pr"
+                        type="object"
+                        string="Tạo PR bổ sung"
+                        class="btn-primary"
+                        invisible="replenishment_count == 0"
+                    />
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_product_lines" type="object" class="oe_stat_button" icon="fa-cubes">
+                            <field name="product_count" widget="statinfo" string="Mặt hàng"/>
+                        </button>
+                        <button name="action_view_purchase_requests" type="object" class="oe_stat_button" icon="fa-file-text-o">
+                            <field name="purchase_request_count" widget="statinfo" string="PR"/>
+                        </button>
+                        <button name="action_view_sales_orders" type="object" class="oe_stat_button" icon="fa-shopping-cart">
+                            <field name="sales_order_count" widget="statinfo" string="Bán hàng"/>
+                        </button>
+                        <button name="action_view_receipts" type="object" class="oe_stat_button" icon="fa-truck">
+                            <field name="replenishment_count" widget="statinfo" string="Cần bổ sung"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="Tên cửa hàng"/></h1>
+                        <div class="text-muted">
+                            <label for="code" string="Mã cửa hàng:" class="oe_inline"/>
+                            <field name="code" class="oe_inline"/>
+                        </div>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="company_id"/>
+                            <field name="responsible_user_id"/>
+                            <field name="store_priority"/>
+                            <field name="warehouse_id" readonly="1"/>
+                            <field name="partner_id" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="phone"/>
+                            <field name="email"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group string="Địa chỉ">
+                        <group>
+                            <field name="street"/>
+                            <field name="street2"/>
+                            <field name="city"/>
+                        </group>
+                        <group>
+                            <field name="state_id"/>
+                            <field name="zip"/>
+                            <field name="country_id"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Danh mục sản phẩm">
+                            <field name="product_line_ids" nolabel="1" context="{'default_store_id': id}">
+                                <list editable="bottom">
+                                    <field name="product_id"/>
+                                    <field name="min_qty"/>
+                                    <field name="max_qty"/>
+                                    <field name="current_qty" readonly="1"/>
+                                    <field name="available_qty" readonly="1"/>
+                                    <field name="suggested_replenishment_qty" readonly="1"/>
+                                    <button
+                                        name="action_create_replenishment_pr"
+                                        type="object"
+                                        string="Tạo PR"
+                                        class="btn-link"
+                                        invisible="suggested_replenishment_qty &lt;= 0"
+                                    />
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Ghi chú">
+                            <field name="note" placeholder="Thông tin vận hành, thời gian mở cửa, lưu ý nhận hàng..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_store_store_search" model="ir.ui.view">
+        <field name="name">store.store.search</field>
+        <field name="model">store.store</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="responsible_user_id"/>
+                <filter name="needs_replenishment" string="Cần bổ sung hàng" domain="[('needs_replenishment', '=', True)]"/>
+                <separator/>
+                <group>
+                    <filter name="group_responsible" string="Người phụ trách" domain="[]" context="{'group_by': 'responsible_user_id'}"/>
+                    <filter name="group_priority" string="Mức ưu tiên" domain="[]" context="{'group_by': 'store_priority'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_store_stores" model="ir.actions.act_window">
+        <field name="name">Danh mục cửa hàng</field>
+        <field name="res_model">store.store</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_store_store_search"/>
+    </record>
+</odoo>

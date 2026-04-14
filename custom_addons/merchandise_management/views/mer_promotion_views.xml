@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- 1. Danh sách sản phẩm con trong Form -->
+    <record id="view_mer_promotion_product_list" model="ir.ui.view">
+        <field name="name">mer.promotion.product.list</field>
+        <field name="model">product.product</field>
+        <field name="arch" type="xml">
+            <list string="Sản phẩm áp dụng" editable="bottom">
+                <field name="default_code" string="Mã SKU" readonly="1"/>
+                <field name="name" string="Tên sản phẩm" readonly="1"/>
+                <field name="lst_price" string="Giá gốc" readonly="1"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- 2. Giao diện Form Khuyến mãi -->
+    <record id="view_mer_promotion_form" model="ir.ui.view">
+        <field name="name">mer.promotion.form</field>
+        <field name="model">mer.promotion</field>
+        <field name="arch" type="xml">
+            <form string="Chương trình Khuyến mãi">
+                <header>
+                    <button name="action_activate" string="Kích hoạt" type="object" invisible="state != 'draft'" class="btn-primary"/>
+                    <button name="action_expire" string="Kết thúc" type="object" invisible="state != 'active'"/>
+                    <field name="state" widget="statusbar"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name" string="Tên chương trình"/>
+                        <h1><field name="name" placeholder="Ví dụ: Giảm giá mùa hè"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code" string="Mã khuyến mãi" required="1"/>
+                            <field name="discount_rate" string="Mức giảm (%)"/>
+                            <field name="target_store_ids" string="Cửa hàng áp dụng" widget="many2many_tags" placeholder="Chọn chi nhánh/cửa hàng..."/>
+                        </group>
+                        <group>
+                            <field name="date_start" string="Ngày bắt đầu" required="1"/>
+                            <field name="date_end" string="Ngày kết thúc" required="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Mô tả" name="description">
+                            <field name="description"/>
+                        </page>
+                        <page string="Sản phẩm áp dụng" name="products">
+                            <group>
+                                <label for="excel_template" string="Import từ file Excel"/>
+                                <div class="o_row">
+                                    <field name="excel_template" filename="excel_template_name" widget="binary"/>
+                                    <field name="excel_template_name" invisible="1"/>
+                                    <button name="action_import_excel" type="object" string="Chạy Import" class="btn-secondary" icon="fa-download" help="Đọc file Excel và nạp xuống bảng danh sách bên dưới."/>
+                                </div>
+                            </group>
+                            <field name="product_ids" context="{'tree_view_ref': 'merchandise_management.view_mer_promotion_product_list'}"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- 3. Giao diện Danh sách Khuyến mãi -->
+    <record id="view_mer_promotion_list" model="ir.ui.view">
+        <field name="name">mer.promotion.list</field>
+        <field name="model">mer.promotion</field>
+        <field name="arch" type="xml">
+            <list string="Chương trình Khuyến mãi">
+                <field name="name" string="Tên chương trình"/>
+                <field name="code" string="Mã KM"/>
+                <field name="discount_rate" string="Mức giảm (%)"/>
+                <field name="target_store_ids" widget="many2many_tags" string="Cửa hàng"/>
+                <field name="date_start" string="Bắt đầu"/>
+                <field name="date_end" string="Kết thúc"/>
+                <field name="state" widget="badge" string="Trạng thái" decoration-success="state == 'active'" decoration-info="state == 'draft'" decoration-danger="state == 'expired'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- 4. Hành động (Action) chính -->
+    <record id="action_mer_promotion" model="ir.actions.act_window">
+        <field name="name">Khuyến mãi</field>
+        <field name="res_model">mer.promotion</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Tạo kế hoạch chương trình khuyến mãi cho Merchandise.
+            </p>
+        </field>
+    </record>
+</odoo>

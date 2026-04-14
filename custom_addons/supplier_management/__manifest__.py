@@ -1,7 +1,7 @@
 {
     "name": "Supplier Management",
     "version": "19.0.1.0.0",
-    "summary": "Supplier performance analytics on top of purchase receipts",
+    "summary": "Phân tích hiệu suất nhà cung cấp dựa trên phiếu nhập mua hàng",
     "category": "Custom_Odoo",
     "author": "Tony",
     "license": "LGPL-3",

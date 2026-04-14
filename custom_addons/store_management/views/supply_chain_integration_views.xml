@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_picking_tree_store_delivery_supply_chain_inherit_store" model="ir.ui.view">
+        <field name="name">stock.picking.tree.store.delivery.supply.chain.inherit.store</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="supply_chain_management.view_picking_tree_store_delivery_supply_chain"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='origin']" position="after">
+                <field name="store_receiving_store_id" string="Cửa hàng nhận"/>
+                <field name="store_route_label" string="Nguồn giao"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_picking_search_store_delivery_supply_chain_inherit_store" model="ir.ui.view">
+        <field name="name">stock.picking.search.store.delivery.supply.chain.inherit.store</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="supply_chain_management.view_picking_search_store_delivery_supply_chain"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <field name="store_receiving_store_id"/>
+            </xpath>
+            <xpath expr="//group" position="inside">
+                <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_picking_form_inherit_supply_chain_management_store_context" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.supply.chain.management.store.context</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="supply_chain_management.view_picking_form_inherit_supply_chain_management"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[.//field[@name='location_dest_id'] and .//field[@name='origin']]/group/group[1]/field[@name='origin']" position="after">
+                <field name="store_receiving_store_id" readonly="1"/>
+                <field name="store_route_label" readonly="1"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

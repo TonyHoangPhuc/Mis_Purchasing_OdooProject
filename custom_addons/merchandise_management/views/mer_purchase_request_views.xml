@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- List: Chi tiết sản phẩm PR -->
+    <record id="view_mer_purchase_request_line_tree" model="ir.ui.view">
+        <field name="name">mer.purchase.request.line.list</field>
+        <field name="model">mer.purchase.request.line</field>
+        <field name="arch" type="xml">
+            <list string="Chi tiết sản phẩm" editable="bottom">
+                <field name="product_id" string="Sản phẩm"/>
+                <field name="product_qty" string="Số lượng"/>
+                <field name="product_uom_id" string="Đơn vị" groups="uom.group_uom"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form: Yêu cầu mua hàng (PR) -->
+    <record id="view_mer_purchase_request_form" model="ir.ui.view">
+        <field name="name">mer.purchase.request.form</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <form string="Yêu cầu mua hàng Merchandise">
+                <header>
+                    <button name="action_submit" string="Gửi đi" type="object" class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_send_to_manager" string="Trình Quản lý" type="object" class="btn-info" invisible="state != 'submitted'" groups="merchandise_management.group_merchandise_user"/>
+                    <button name="action_approve" string="Phê duyệt" type="object" class="btn-success" invisible="state != 'to_approve'" groups="merchandise_management.group_merchandise_manager"/>
+                    <button name="action_reject" string="Từ chối" type="object" class="btn-danger" invisible="state not in ['submitted', 'to_approve']" groups="merchandise_management.group_merchandise_manager"/>
+                    <button name="action_create_po" string="Tạo PO" type="object" class="btn-primary" invisible="state != 'approved'" groups="merchandise_management.group_merchandise_manager"/>
+                    <button name="action_draft" string="Chuyển về nháp" type="object" invisible="state not in ['rejected', 'cancel']"/>
+                    <button name="action_cancel" string="Hủy" type="object" invisible="state not in ['draft', 'submitted']"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,submitted,to_approve,approved,po_created,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="user_id" string="Người tạo" readonly="1"/>
+                            <field name="warehouse_id" string="Cửa hàng" required="1"/>
+                            <field name="partner_id" string="Kho tổng / NCC" required="1"/>
+                            <field name="date_request" string="Ngày yêu cầu"/>
+                        </group>
+                        <group>
+                            <field name="manager_id" string="Người duyệt" readonly="1"/>
+                            <field name="purchase_id" string="Đơn PO liên quan" readonly="1" invisible="not purchase_id"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Sản phẩm" name="lines">
+                            <!-- O2M: Chi tiết sản phẩm -->
+                            <field name="line_ids" mode="list"/>
+                        </page>
+                        <page string="Ghi chú" name="notes">
+                            <field name="notes" placeholder="Nhập ghi chú thêm..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- List: Danh sách các PR -->
+    <record id="view_mer_purchase_request_tree" model="ir.ui.view">
+        <field name="name">mer.purchase.request.list</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <list string="Yêu cầu mua hàng Merchandise">
+                <field name="name" string="Mã yêu cầu"/>
+                <field name="warehouse_id" string="Cửa hàng"/>
+                <field name="user_id" string="Người tạo"/>
+                <field name="date_request" string="Ngày yêu cầu"/>
+                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'submitted'" decoration-success="state in ['approved', 'done']" decoration-warning="state == 'po_created'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- 4. Action -->
+    <record id="action_mer_purchase_request" model="ir.actions.act_window">
+        <field name="name">Yêu cầu mua hàng (PR)</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

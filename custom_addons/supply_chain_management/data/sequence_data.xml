@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo noupdate="1">
     <record id="seq_supply_chain_allocation_plan" model="ir.sequence">
-        <field name="name">Supply Chain Allocation Plan</field>
+        <field name="name">Kế hoạch phân bổ chuỗi cung ứng</field>
         <field name="code">supply.chain.allocation.plan</field>
         <field name="prefix">SCP/%(year)s/</field>
         <field name="padding">4</field>

@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_purchase_request_form_inherit_store" model="ir.ui.view">
+        <field name="name">mer.purchase.request.form.inherit.store</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_purchase_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_confirm_central_stock"
+                    type="object"
+                    string="Xác nhận đủ hàng"
+                    class="oe_highlight"
+                    invisible="not context.get('central_check_menu') or pending_central_check_count == 0 or state not in ['approved', 'po_created']"
+                />
+            </xpath>
+
+            <xpath expr="//button[@name='action_submit']" position="attributes">
+                <attribute name="invisible">context.get('central_check_menu') or (context.get('from_store_menu') and state != 'draft') or (not context.get('from_store_menu') and state != 'draft')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_send_to_manager']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'submitted'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_approve']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'to_approve'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_reject']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['submitted', 'to_approve']</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_create_po']" position="attributes">
+                <attribute name="string">Khởi tạo xử lý</attribute>
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'approved'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_draft']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['rejected', 'cancel']</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_cancel']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['draft', 'submitted']</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='warehouse_id']" position="before">
+                <field
+                    name="store_id"
+                    options="{'no_create_edit': False}"
+                    readonly="context.get('from_store_menu') and state != 'draft'"
+                />
+            </xpath>
+            <xpath expr="//field[@name='warehouse_id']" position="attributes">
+                <attribute name="string">Kho cửa hàng</attribute>
+                <attribute name="readonly">context.get('from_store_menu') or state != 'draft'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='partner_id']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//field[@name='date_request']" position="attributes">
+                <attribute name="readonly">context.get('from_store_menu') and state != 'draft'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='notes']" position="attributes">
+                <attribute name="readonly">context.get('from_store_menu') and state != 'draft'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='purchase_id']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//field[@name='manager_id']" position="after">
+                <field name="internal_picking_count" readonly="1" invisible="internal_picking_count == 0"/>
+                <field name="purchase_order_count" readonly="1" invisible="purchase_order_count == 0"/>
+                <field name="internal_line_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="pending_central_check_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="waiting_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="central_flow_status" readonly="1" invisible="not context.get('central_check_menu')"/>
+            </xpath>
+
+            <xpath expr="//page[@name='lines']/field[@name='line_ids']" position="replace">
+                <field name="line_ids" readonly="state != 'draft'">
+                    <list editable="bottom">
+                        <field name="product_id"/>
+                        <field name="product_qty"/>
+                        <field name="product_uom_id" readonly="1"/>
+                    </list>
+                </field>
+            </xpath>
+
+            <xpath expr="//page[@name='lines']" position="after">
+                <page string="Phương án xử lý" name="fulfillment" invisible="context.get('from_store_menu')">
+                    <field name="line_ids" nolabel="1" readonly="state not in ['submitted', 'approved', 'po_created']">
+                        <list editable="bottom" create="0" delete="0">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_qty" readonly="1"/>
+                            <field name="product_uom_id" readonly="1"/>
+                            <field name="fulfillment_method"/>
+                            <field name="source_warehouse_id" invisible="fulfillment_method != 'internal'"/>
+                            <field name="source_available_qty" readonly="1" invisible="fulfillment_method != 'internal'"/>
+                            <field
+                                name="supplier_id"
+                                invisible="fulfillment_method != 'supplier'"
+                                context="{'only_supplier_contacts': True}"
+                            />
+                            <field name="route_status_display" readonly="1"/>
+                            <field name="internal_picking_id" readonly="1" optional="show"/>
+                            <field name="purchase_order_id" readonly="1" optional="show"/>
+                        </list>
+                    </field>
+                </page>
+                <page string="Phân tích tồn kho" name="availability" invisible="context.get('from_store_menu')">
+                    <field name="line_ids" nolabel="1" readonly="1">
+                        <list create="0" delete="0">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_qty" readonly="1"/>
+                            <field name="central_on_hand_qty" readonly="1"/>
+                            <field name="central_available_qty" readonly="1"/>
+                            <field name="other_warehouses_qty" readonly="1"/>
+                            <field name="availability_breakdown" readonly="1"/>
+                            <button name="action_view_supply_stock" type="object" string="Xem tồn" class="btn-link"/>
+                        </list>
+                    </field>
+                </page>
+                <page string="Kiểm hàng Kho tổng" name="central_check" invisible="not context.get('central_check_menu')">
+                    <field name="line_ids" nolabel="1" readonly="1">
+                        <list create="0" delete="0">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_qty" readonly="1"/>
+                            <field name="fulfillment_method" readonly="1"/>
+                            <field name="source_warehouse_id" readonly="1"/>
+                            <field name="central_available_qty" readonly="1"/>
+                            <field name="source_available_qty" readonly="1"/>
+                            <field name="internal_flow_state" readonly="1"/>
+                            <field name="route_status_display" readonly="1"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_tree_inherit_store" model="ir.ui.view">
+        <field name="name">mer.purchase.request.tree.inherit.store</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_purchase_request_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='warehouse_id']" position="before">
+                <field name="store_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_tree_central_check" model="ir.ui.view">
+        <field name="name">mer.purchase.request.tree.central.check</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <list default_order="date_request desc">
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="date_request"/>
+                <field name="internal_line_count"/>
+                <field name="pending_central_check_count"/>
+                <field name="waiting_delivery_count"/>
+                <field name="central_flow_status"/>
+                <button
+                    name="action_confirm_central_stock"
+                    type="object"
+                    string="Xác nhận đủ hàng"
+                    class="btn-link"
+                    invisible="pending_central_check_count == 0"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_search_central_check" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.central.check</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <filter
+                    name="pending_central_check"
+                    string="Chờ Kho tổng kiểm"
+                    domain="[('line_ids.fulfillment_method', '=', 'internal'), ('line_ids.internal_flow_state', '=', 'pending_check')]"
+                />
+                <filter
+                    name="waiting_delivery"
+                    string="Chờ Supply Chain giao"
+                    domain="[('line_ids.fulfillment_method', '=', 'internal'), ('line_ids.internal_flow_state', '=', 'waiting_delivery')]"
+                />
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_status" string="Trạng thái Kho tổng" domain="[]" context="{'group_by': 'central_flow_status'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_store_purchase_requests" model="ir.actions.act_window">
+        <field name="name">Gửi yêu cầu PR</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('store_id', '!=', False)]</field>
+        <field name="context">{'from_store_menu': 1}</field>
+    </record>
+
+    <record id="action_central_stock_requests" model="ir.actions.act_window">
+        <field name="name">Đơn cần kiểm hàng</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_tree_central_check"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_central_check"/>
+        <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created']), ('line_ids.fulfillment_method', '=', 'internal'), ('line_ids.internal_flow_state', '=', 'pending_check')]</field>
+        <field name="context">{'central_check_menu': 1, 'search_default_pending_central_check': 1}</field>
+    </record>
+</odoo>
