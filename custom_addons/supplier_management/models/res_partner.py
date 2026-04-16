@@ -9,56 +9,56 @@ class ResPartner(models.Model):
     _supplier_contact_category_name = "NCC"
 
     is_supplier_contact = fields.Boolean(
-        string="Là nhà cung cấp",
-        help="Đánh dấu liên hệ này là nhà cung cấp để có thể chọn trong các nghiệp vụ mua hàng.",
+        string="L\u00e0 nh\u00e0 cung c\u1ea5p",
+        help="\u0110\u00e1nh d\u1ea5u \u0111\u1ed1i t\u00e1c n\u00e0y l\u00e0 nh\u00e0 cung c\u1ea5p \u0111\u1ec3 c\u00f3 th\u1ec3 ch\u1ecdn trong nghi\u1ec7p v\u1ee5 mua h\u00e0ng.",
         compute="_compute_is_supplier_contact",
         inverse="_inverse_is_supplier_contact",
         search="_search_is_supplier_contact",
     )
     sm_show_supplier_performance = fields.Boolean(
-        string="Hiển thị trong hiệu suất nhà cung cấp",
+        string="Hi\u1ec3n th\u1ecb trong hi\u1ec7u su\u1ea5t nh\u00e0 cung c\u1ea5p",
         compute="_compute_supplier_metrics",
         search="_search_sm_show_supplier_performance",
     )
     lead_time_avg = fields.Float(
-        string="Thời gian giao trung bình (ngày)",
+        string="Th\u1eddi gian giao trung b\u00ecnh (ng\u00e0y)",
         compute="_compute_supplier_metrics",
         digits=(16, 2),
     )
     on_time_delivery_rate = fields.Float(
-        string="Tỷ lệ giao đúng hạn (%)",
+        string="T\u1ef7 l\u1ec7 giao \u0111\u00fang h\u1ea1n (%)",
         compute="_compute_supplier_metrics",
         digits=(16, 2),
         search="_search_on_time_delivery_rate",
     )
     delivery_accuracy_rate = fields.Float(
-        string="Độ chính xác giao hàng (%)",
+        string="\u0110\u1ed9 ch\u00ednh x\u00e1c giao h\u00e0ng (%)",
         compute="_compute_supplier_metrics",
         digits=(16, 2),
     )
     quality_score = fields.Float(
-        string="Điểm chất lượng (%)",
+        string="\u0110i\u1ec3m ch\u1ea5t l\u01b0\u1ee3ng (%)",
         compute="_compute_supplier_metrics",
         digits=(16, 2),
         search="_search_quality_score",
     )
     supplier_rating = fields.Selection(
         [
-            ("1", "1 - Kém"),
-            ("2", "2 - Trung bình"),
-            ("3", "3 - Khá"),
-            ("4", "4 - Tốt"),
-            ("5", "5 - Xuất sắc"),
+            ("1", "1 - K\u00e9m"),
+            ("2", "2 - Trung b\u00ecnh"),
+            ("3", "3 - Kh\u00e1"),
+            ("4", "4 - T\u1ed1t"),
+            ("5", "5 - Xu\u1ea5t s\u1eafc"),
         ],
-        string="Xếp hạng nhà cung cấp",
+        string="X\u1ebfp h\u1ea1ng nh\u00e0 cung c\u1ea5p",
         default="3",
     )
     supplier_purchase_count = fields.Integer(
-        string="Đơn mua",
+        string="\u0110\u01a1n mua",
         compute="_compute_supplier_metrics",
     )
     supplier_receipt_count = fields.Integer(
-        string="Phiếu nhập",
+        string="Phi\u1ebfu nh\u1eadp",
         compute="_compute_supplier_metrics",
     )
 
@@ -73,6 +73,12 @@ class ResPartner(models.Model):
             )
         return category
 
+    def _get_supplier_filter_domain(self):
+        category = self._get_supplier_contact_category()
+        if category:
+            return [("category_id", "in", category.ids)]
+        return [("id", "=", 0)]
+
     @api.depends("category_id")
     def _compute_is_supplier_contact(self):
         category = self._get_supplier_contact_category()
@@ -83,8 +89,11 @@ class ResPartner(models.Model):
         category = self._get_supplier_contact_category(create_if_missing=True)
         for partner in self:
             if partner.is_supplier_contact:
+                if partner.supplier_rank <= 0:
+                    partner.supplier_rank = 1
                 partner.category_id = [(4, category.id)]
             else:
+                partner.supplier_rank = 0
                 partner.category_id = [(3, category.id)]
 
     def _search_is_supplier_contact(self, operator, value):
@@ -92,13 +101,11 @@ class ResPartner(models.Model):
             return []
 
         category = self._get_supplier_contact_category()
-        if not category:
-            return [("id", "=", 0)] if (operator == "=" and value) or (operator == "!=" and not value) else []
-
-        domain = [("category_id", "in", category.ids)]
         if (operator == "=" and value) or (operator == "!=" and not value):
-            return domain
-        return [("category_id", "not in", category.ids)]
+            return self._get_supplier_filter_domain()
+        if category:
+            return [("category_id", "not in", category.ids)]
+        return []
 
     @api.depends("supplier_rank", "supplier_rating")
     def _compute_supplier_metrics(self):
@@ -130,7 +137,7 @@ class ResPartner(models.Model):
             supplier_purchases = purchases_by_supplier.get(partner.id, self.env["purchase.order"])
             supplier_receipts = receipts_by_supplier.get(partner.id, self.env["stock.picking"])
             partner.sm_show_supplier_performance = bool(
-                partner.supplier_rank > 0 or supplier_purchases or supplier_receipts
+                partner.is_supplier_contact or supplier_purchases or supplier_receipts
             )
             lead_times = []
             on_time_count = 0
@@ -156,7 +163,6 @@ class ResPartner(models.Model):
                     mismatch_ratio = abs(received_qty - expected_qty) / expected_qty
                     accuracy_scores.append(max(0.0, (1.0 - mismatch_ratio) * 100.0))
 
-                # Quality is weighted by usable quantity after QC and damage tracking.
                 accepted_qty = 0.0 if receipt.wm_qc_status == "rejected" else max(received_qty - damaged_qty, 0.0)
                 total_accepted_qty += accepted_qty
 
@@ -184,7 +190,7 @@ class ResPartner(models.Model):
         visible_partners = (
             purchase_partners
             | receipt_partners
-            | self.search([("supplier_rank", ">", 0)])
+            | self.search(self._get_supplier_filter_domain())
         ).ids
 
         if (operator == "=" and value) or (operator == "!=" and not value):
@@ -205,7 +211,7 @@ class ResPartner(models.Model):
                 )
             )
             return [("id", "in", matched_partners.ids)]
-        return [("id", "in", matched_partners.ids)]
+        return [("id", "in", suppliers.ids)]
 
     def _search_on_time_delivery_rate(self, operator, value):
         return self._search_metric_value("on_time_delivery_rate", operator, value)
@@ -217,7 +223,11 @@ class ResPartner(models.Model):
     def name_search(self, name="", args=None, operator="ilike", limit=100):
         args = list(args or [])
         if self.env.context.get("only_supplier_contacts"):
-            args.append(("category_id.name", "=", self._supplier_contact_category_name))
+            category = self._get_supplier_contact_category()
+            if category:
+                args.append(("category_id", "in", category.ids))
+            else:
+                args.append(("id", "=", 0))
         return super().name_search(name, args, operator, limit)
 
     def action_view_supplier_purchase_orders(self):

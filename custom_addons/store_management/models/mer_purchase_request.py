@@ -138,18 +138,38 @@ class MerPurchaseRequest(models.Model):
     @api.depends(
         "line_ids.fulfillment_method",
         "line_ids.internal_flow_state",
+        "line_ids.purchase_order_id",
+        "line_ids.purchase_order_id.picking_ids.state",
+        "line_ids.purchase_order_id.picking_ids.wm_qc_status",
+        "line_ids.purchase_order_id.picking_ids.picking_type_id.warehouse_id",
         "line_ids.internal_picking_id.state",
         "line_ids.internal_picking_id.wm_qc_status",
     )
     def _compute_internal_flow_metrics(self):
         for request in self:
             internal_lines = request.line_ids.filtered(lambda line: line.fulfillment_method == "internal")
-            request.internal_line_count = len(internal_lines)
+            central_lines = request.line_ids.filtered(
+                lambda line: line.fulfillment_method in ("internal", "supplier_central")
+            )
+            request.internal_line_count = len(central_lines)
             request.pending_central_check_count = len(
                 internal_lines.filtered(lambda line: line.internal_flow_state == "pending_check")
             )
+            waiting_receipt_count = len(
+                central_lines.filtered(
+                    lambda line: line.fulfillment_method == "supplier_central"
+                    and line.purchase_order_id
+                    and not line.purchase_order_id.picking_ids.filtered(
+                        lambda picking: picking.state != "cancel"
+                        and picking.picking_type_code == "incoming"
+                        and picking.picking_type_id.warehouse_id
+                        and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
+                        and (picking.state == "done" or picking.wm_qc_status == "rejected")
+                    )
+                )
+            )
             request.waiting_delivery_count = len(
-                internal_lines.filtered(
+                central_lines.filtered(
                     lambda line: line.internal_flow_state == "waiting_delivery"
                     and line.internal_picking_id.state not in ("done", "cancel")
                 )
@@ -157,18 +177,30 @@ class MerPurchaseRequest(models.Model):
             has_rejected_line = any(
                 line.internal_flow_state == "rejected"
                 or (line.internal_picking_id and line.internal_picking_id.wm_qc_status == "rejected")
-                for line in internal_lines
+                or (
+                    line.fulfillment_method == "supplier_central"
+                    and line.purchase_order_id.picking_ids.filtered(
+                        lambda picking: picking.state != "cancel"
+                        and picking.picking_type_code == "incoming"
+                        and picking.picking_type_id.warehouse_id
+                        and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
+                        and picking.wm_qc_status == "rejected"
+                    )
+                )
+                for line in central_lines
             )
 
-            if not internal_lines:
-                request.central_flow_status = _("Không có điều chuyển Kho tổng")
+            if not central_lines:
+                request.central_flow_status = _("Không qua Kho tổng")
             elif request.pending_central_check_count:
                 request.central_flow_status = _("Chờ Kho tổng kiểm hàng")
+            elif waiting_receipt_count:
+                request.central_flow_status = _("Chờ NCC giao Kho tổng")
             elif request.waiting_delivery_count:
-                request.central_flow_status = _("Chờ Supply Chain giao hàng")
+                request.central_flow_status = _("Chờ Kho tổng giao hàng")
             elif has_rejected_line:
-                request.central_flow_status = _("Cửa hàng từ chối nhận do hàng lỗi")
-            elif all(line.internal_flow_state == "delivered" for line in internal_lines):
+                request.central_flow_status = _("Có lô hàng lỗi")
+            elif all(request._is_line_logistically_completed(line) for line in central_lines):
                 request.central_flow_status = _("Đã giao hàng về cửa hàng")
             else:
                 request.central_flow_status = _("Đang xử lý")
@@ -182,12 +214,18 @@ class MerPurchaseRequest(models.Model):
         warehouses = self.env["stock.warehouse"].search(
             [
                 ("company_id", "=", self.company_id.id),
-                "|",
-                ("mis_role", "in", ["central", "store"]),
-                ("mis_role", "=", False),
+                ("mis_role", "=", "central"),
             ]
         )
-        return warehouses.filtered(lambda wh: wh.id != self.warehouse_id.id)
+        if warehouses:
+            return warehouses
+        return self.env["stock.warehouse"].search(
+            [
+                ("company_id", "=", self.company_id.id),
+                ("id", "!=", self.warehouse_id.id),
+                ("mis_role", "!=", "store"),
+            ]
+        )
 
     def _get_default_internal_source_warehouse(self):
         self.ensure_one()
@@ -206,9 +244,27 @@ class MerPurchaseRequest(models.Model):
 
     def _validate_merchandise_processing(self):
         for request in self:
+            request._ensure_approved_quantities()
             if not request.line_ids:
                 raise UserError(_("PR phải có ít nhất một sản phẩm trước khi trình quản lý."))
             for line in request.line_ids:
+                if line.approved_qty <= 0:
+                    raise UserError(
+                        _(
+                            "S\u1ea3n ph\u1ea9m %s ph\u1ea3i c\u00f3 s\u1ed1 l\u01b0\u1ee3ng "
+                            "\u0111\u01b0\u1ee3c duy\u1ec7t l\u1edbn h\u01a1n 0."
+                        )
+                        % line.product_id.display_name
+                    )
+                if line.approved_qty > line.product_qty:
+                    raise UserError(
+                        _(
+                            "S\u1ea3n ph\u1ea9m %s c\u00f3 s\u1ed1 l\u01b0\u1ee3ng \u0111\u01b0\u1ee3c "
+                            "duy\u1ec7t kh\u00f4ng \u0111\u01b0\u1ee3c l\u1edbn h\u01a1n s\u1ed1 "
+                            "l\u01b0\u1ee3ng y\u00eau c\u1ea7u."
+                        )
+                        % line.product_id.display_name
+                    )
                 if not line.fulfillment_method:
                     raise UserError(_("Vui lòng chọn phương án đáp ứng cho tất cả sản phẩm trước khi trình quản lý."))
                 if line.fulfillment_method == "internal":
@@ -217,8 +273,14 @@ class MerPurchaseRequest(models.Model):
                             _("Sản phẩm %s chưa chọn kho nguồn để điều chuyển nội bộ.")
                             % line.product_id.display_name
                         )
-                elif line.fulfillment_method == "supplier" and not line.supplier_id:
+                elif line.fulfillment_method in ("supplier", "supplier_central") and not line.supplier_id:
                     raise UserError(_("Sản phẩm %s chưa có NCC đáp ứng.") % line.product_id.display_name)
+
+    def _ensure_approved_quantities(self):
+        for request in self:
+            missing_approved_qty_lines = request.line_ids.filtered(lambda line: not line.approved_qty)
+            for line in missing_approved_qty_lines:
+                line.approved_qty = line.product_qty
 
     def _get_pending_internal_lines(self):
         self.ensure_one()
@@ -244,6 +306,21 @@ class MerPurchaseRequest(models.Model):
                 )
             )
 
+        if line.fulfillment_method == "supplier_central":
+            if not line.purchase_order_id:
+                return False
+            receipt_pickings = line.purchase_order_id.picking_ids.filtered(
+                lambda picking: picking.state != "cancel"
+                and picking.picking_type_code == "incoming"
+                and picking.picking_type_id.warehouse_id
+                and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
+            )
+            if receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
+                return True
+            if not receipt_pickings.filtered(lambda picking: picking.state == "done"):
+                return False
+            return line.internal_flow_state in ("delivered", "rejected")
+
         if line.fulfillment_method == "internal":
             return line.internal_flow_state in ("delivered", "rejected")
 
@@ -252,7 +329,9 @@ class MerPurchaseRequest(models.Model):
     def _sync_state_with_logistics(self):
         active_states = {"approved", "po_created", "done"}
         for request in self.filtered(lambda req: req.state in active_states):
-            lines = request.line_ids.filtered(lambda line: line.fulfillment_method in ("supplier", "internal"))
+            lines = request.line_ids.filtered(
+                lambda line: line.fulfillment_method in ("supplier", "supplier_central", "internal")
+            )
             if not lines:
                 continue
 
@@ -263,6 +342,63 @@ class MerPurchaseRequest(models.Model):
                 request.state = "done"
             elif has_started_documents:
                 request.state = "po_created"
+
+    def _create_internal_pickings_for_lines(self, lines):
+        self.ensure_one()
+        lines = lines.filtered(lambda line: not line.internal_picking_id)
+        if not lines:
+            return self.env["stock.picking"]
+
+        grouped_lines = defaultdict(lambda: self.env["mer.purchase.request.line"])
+        for line in lines:
+            source_warehouse = line.source_warehouse_id or self._get_default_internal_source_warehouse()
+            if not source_warehouse:
+                raise UserError(
+                    _("KhÃ´ng xÃ¡c Ä‘á»‹nh Ä‘Æ°á»£c kho nguá»“n Ä‘á»ƒ chuyá»ƒn hÃ ng cho PR %s.") % self.display_name
+                )
+            grouped_lines[source_warehouse.id] |= line
+
+        created_pickings = self.env["stock.picking"]
+        for source_warehouse_id, grouped_request_lines in grouped_lines.items():
+            source_warehouse = self.env["stock.warehouse"].browse(source_warehouse_id)
+            picking = self.env["stock.picking"].sudo().create(
+                {
+                    "partner_id": self.store_id.partner_id.id if self.store_id and self.store_id.partner_id else False,
+                    "picking_type_id": source_warehouse.int_type_id.id,
+                    "location_id": source_warehouse.lot_stock_id.id,
+                    "location_dest_id": self.warehouse_id.lot_stock_id.id,
+                    "origin": self.name,
+                    "scheduled_date": fields.Datetime.now(),
+                    "move_ids": [
+                        (
+                            0,
+                            0,
+                            {
+                                "description_picking": line.product_id.display_name,
+                                "product_id": line.product_id.id,
+                                "product_uom_qty": line.approved_qty,
+                                "product_uom": line.product_uom_id.id,
+                                "location_id": source_warehouse.lot_stock_id.id,
+                                "location_dest_id": self.warehouse_id.lot_stock_id.id,
+                            },
+                        )
+                        for line in grouped_request_lines
+                    ],
+                }
+            )
+            picking.action_confirm()
+            picking.action_assign()
+            grouped_request_lines.with_context(store_skip_sync_rule=True).write(
+                {
+                    "internal_picking_id": picking.id,
+                    "internal_flow_state": "waiting_delivery",
+                }
+            )
+            created_pickings |= picking
+
+        if created_pickings:
+            self.state = "po_created"
+        return created_pickings
 
     def action_submit(self):
         self = self.with_context(store_current_action="action_submit")
@@ -312,6 +448,7 @@ class MerPurchaseRequest(models.Model):
         self = self.with_context(store_current_action="action_create_po")
         self._check_store_menu_action_allowed()
         self.ensure_one()
+        self._ensure_approved_quantities()
         if self.state != "approved":
             raise UserError(_("PR cần được phê duyệt trước khi khởi tạo xử lý."))
 
@@ -325,17 +462,24 @@ class MerPurchaseRequest(models.Model):
         supplier_groups = defaultdict(lambda: self.env["mer.purchase.request.line"])
 
         for line in lines_to_process:
-            if line.fulfillment_method == "supplier":
-                supplier_groups[line.supplier_id.id] |= line
+            if line.fulfillment_method in ("supplier", "supplier_central"):
+                supplier_groups[(line.supplier_id.id, line.fulfillment_method)] |= line
 
-        for supplier_id, grouped_lines in supplier_groups.items():
+        for (supplier_id, fulfillment_method), grouped_lines in supplier_groups.items():
             supplier = self.env["res.partner"].browse(supplier_id)
+            target_warehouse = (
+                self._get_default_internal_source_warehouse()
+                if fulfillment_method == "supplier_central"
+                else self.warehouse_id
+            )
+            if not target_warehouse:
+                raise UserError(_("Chưa cấu hình Kho tổng để tiếp nhận hàng từ NCC."))
             order = self.env["purchase.order"].sudo().create(
                 {
                     "partner_id": supplier.id,
                     "origin": self.name,
                     "date_order": fields.Datetime.now(),
-                    "picking_type_id": self.warehouse_id.in_type_id.id,
+                    "picking_type_id": target_warehouse.in_type_id.id,
                     "order_line": [
                         (
                             0,
@@ -343,7 +487,7 @@ class MerPurchaseRequest(models.Model):
                             {
                                 "product_id": line.product_id.id,
                                 "name": line.product_id.display_name,
-                                "product_qty": line.product_qty,
+                                "product_qty": line.approved_qty,
                                 "product_uom_id": line.product_uom_id.id,
                                 "price_unit": line.product_id.standard_price,
                                 "date_planned": fields.Datetime.now(),
@@ -354,7 +498,12 @@ class MerPurchaseRequest(models.Model):
                 }
             )
             order.button_confirm()
-            grouped_lines.with_context(store_skip_sync_rule=True).write({"purchase_order_id": order.id})
+            write_vals = {"purchase_order_id": order.id}
+            if fulfillment_method == "supplier_central":
+                write_vals["internal_flow_state"] = "waiting_receipt"
+                for line in grouped_lines.filtered(lambda request_line: not request_line.source_warehouse_id):
+                    line.source_warehouse_id = target_warehouse
+            grouped_lines.with_context(store_skip_sync_rule=True).write(write_vals)
             created_orders |= order
 
         internal_lines = lines_to_process.filtered(lambda line: line.fulfillment_method == "internal")
@@ -376,11 +525,12 @@ class MerPurchaseRequest(models.Model):
 
     def action_confirm_central_stock(self):
         self.ensure_one()
+        self._ensure_approved_quantities()
         pending_lines = self._get_pending_internal_lines()
         if not pending_lines:
             raise UserError(_("PR này không có dòng nội bộ nào đang chờ Kho tổng kiểm hàng."))
 
-        insufficient_lines = pending_lines.filtered(lambda line: line.source_available_qty < line.product_qty)
+        insufficient_lines = pending_lines.filtered(lambda line: line.source_available_qty < line.approved_qty)
         if insufficient_lines:
             raise UserError(
                 _(
@@ -390,50 +540,7 @@ class MerPurchaseRequest(models.Model):
                 % ", ".join(insufficient_lines.mapped("product_id.display_name"))
             )
 
-        grouped_lines = defaultdict(lambda: self.env["mer.purchase.request.line"])
-        for line in pending_lines:
-            grouped_lines[line.source_warehouse_id.id] |= line
-
-        created_pickings = self.env["stock.picking"]
-        for source_warehouse_id, lines in grouped_lines.items():
-            source_warehouse = self.env["stock.warehouse"].browse(source_warehouse_id)
-            picking = self.env["stock.picking"].sudo().create(
-                {
-                    "partner_id": self.store_id.partner_id.id if self.store_id and self.store_id.partner_id else False,
-                    "picking_type_id": source_warehouse.int_type_id.id,
-                    "location_id": source_warehouse.lot_stock_id.id,
-                    "location_dest_id": self.warehouse_id.lot_stock_id.id,
-                    "origin": self.name,
-                    "scheduled_date": fields.Datetime.now(),
-                    "move_ids": [
-                        (
-                            0,
-                            0,
-                            {
-                                "description_picking": line.product_id.display_name,
-                                "product_id": line.product_id.id,
-                                "product_uom_qty": line.product_qty,
-                                "product_uom": line.product_uom_id.id,
-                                "location_id": source_warehouse.lot_stock_id.id,
-                                "location_dest_id": self.warehouse_id.lot_stock_id.id,
-                            },
-                        )
-                        for line in lines
-                    ],
-                }
-            )
-            picking.action_confirm()
-            picking.action_assign()
-            lines.with_context(store_skip_sync_rule=True).write(
-                {
-                    "internal_picking_id": picking.id,
-                    "internal_flow_state": "waiting_delivery",
-                }
-            )
-            created_pickings |= picking
-
-        if created_pickings:
-            self.state = "po_created"
+        self._create_internal_pickings_for_lines(pending_lines)
 
         return {
             "type": "ir.actions.act_window",
@@ -447,6 +554,12 @@ class MerPurchaseRequest(models.Model):
 
 class MerPurchaseRequestLine(models.Model):
     _inherit = "mer.purchase.request.line"
+    approved_qty = fields.Float(
+        string="S\u1ed1 l\u01b0\u1ee3ng \u0111\u01b0\u1ee3c duy\u1ec7t",
+        digits="Product Unit of Measure",
+        default=0.0,
+        tracking=True,
+    )
 
     request_company_id = fields.Many2one(
         "res.company",
@@ -462,8 +575,9 @@ class MerPurchaseRequestLine(models.Model):
     )
     fulfillment_method = fields.Selection(
         [
-            ("internal", "Chuyển nội bộ"),
-            ("supplier", "Nhập từ NCC"),
+            ("internal", "Kho tổng có sẵn"),
+            ("supplier_central", "NCC giao về Kho tổng"),
+            ("supplier", "NCC giao thẳng Cửa hàng"),
         ],
         string="Phương án đáp ứng",
         tracking=True,
@@ -494,11 +608,12 @@ class MerPurchaseRequestLine(models.Model):
         [
             ("not_applicable", "Không áp dụng"),
             ("pending_check", "Chờ Kho tổng kiểm"),
-            ("waiting_delivery", "Chờ Supply Chain giao"),
+            ("waiting_receipt", "Chờ NCC giao Kho tổng"),
+            ("waiting_delivery", "Chờ Kho tổng giao"),
             ("rejected", "Hàng lỗi"),
             ("delivered", "Đã giao cửa hàng"),
         ],
-        string="Luồng nội bộ",
+        string="Tiến trình hậu cần",
         default="not_applicable",
         copy=False,
         tracking=True,
@@ -532,18 +647,59 @@ class MerPurchaseRequestLine(models.Model):
         compute="_compute_supply_metrics",
     )
 
+    def _get_product_supplier_candidates(self):
+        self.ensure_one()
+        supplier_category = self.env["res.partner.category"].search([("name", "=", "NCC")], limit=1)
+        partners = self.product_id.seller_ids.mapped("partner_id")
+        if supplier_category:
+            return partners.filtered(lambda partner: supplier_category in partner.category_id)
+        return self.env["res.partner"]
+
+    def _auto_init(self):
+        res = super()._auto_init()
+        self.env.cr.execute(
+            """
+            UPDATE mer_purchase_request_line
+               SET approved_qty = product_qty
+             WHERE approved_qty IS NULL OR approved_qty = 0
+            """
+        )
+        return res
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            if "approved_qty" not in vals:
+                vals["approved_qty"] = vals.get("product_qty", 1.0)
+        return super().create(vals_list)
+
+    def write(self, vals):
+        if "product_qty" in vals and "approved_qty" not in vals:
+            draft_lines = self.filtered(lambda line: line.request_id.state == "draft")
+            non_draft_lines = self - draft_lines
+            result = True
+            if draft_lines:
+                draft_vals = dict(vals, approved_qty=vals["product_qty"])
+                result = super(MerPurchaseRequestLine, draft_lines).write(draft_vals) and result
+            if non_draft_lines:
+                result = super(MerPurchaseRequestLine, non_draft_lines).write(vals) and result
+            return result
+        return super().write(vals)
+
     @api.onchange("fulfillment_method", "product_id")
     def _onchange_fulfillment_method(self):
         if self.fulfillment_method == "internal":
             self.supplier_id = False
             self.source_warehouse_id = self.request_id._get_default_internal_source_warehouse()
             self.internal_flow_state = "not_applicable"
+        elif self.fulfillment_method == "supplier_central":
+            self.source_warehouse_id = self.request_id._get_default_internal_source_warehouse()
+            self.internal_flow_state = "not_applicable"
+            self.supplier_id = self._get_product_supplier_candidates()[:1]
         elif self.fulfillment_method == "supplier":
             self.source_warehouse_id = False
             self.internal_flow_state = "not_applicable"
-            self.supplier_id = self.product_id.seller_ids.mapped("partner_id").filtered(
-                lambda partner: "NCC" in partner.category_id.mapped("name")
-            )[:1]
+            self.supplier_id = self._get_product_supplier_candidates()[:1]
 
     @api.depends(
         "fulfillment_method",
@@ -575,6 +731,28 @@ class MerPurchaseRequestLine(models.Model):
                         status = _("PO đã tạo")
                 else:
                     status = _("Chờ tạo PO NCC")
+            elif line.fulfillment_method == "supplier_central":
+                if line.purchase_order_id:
+                    receipt_pickings = line.purchase_order_id.picking_ids.filtered(
+                        lambda picking: picking.state != "cancel"
+                        and picking.picking_type_code == "incoming"
+                        and picking.picking_type_id.warehouse_id
+                        and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
+                    )
+                    if receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
+                        status = _("Kho tổng QC không đạt")
+                    elif line.internal_picking_id and line.internal_picking_id.state == "done":
+                        status = _("Cửa hàng đã nhận hàng")
+                    elif line.internal_picking_id:
+                        status = _("Chờ Kho tổng giao hàng")
+                    elif receipt_pickings.filtered(lambda picking: picking.state == "done"):
+                        status = _("Kho tổng đã nhận, chờ tạo điều chuyển")
+                    elif receipt_pickings:
+                        status = _("Chờ Kho tổng QC hàng NCC")
+                    else:
+                        status = _("PO đã tạo")
+                else:
+                    status = _("Chờ tạo PO NCC")
             elif line.fulfillment_method == "internal":
                 if line.internal_picking_id and line.internal_picking_id.state == "done":
                     status = _("Cửa hàng đã nhận hàng")
@@ -584,7 +762,7 @@ class MerPurchaseRequestLine(models.Model):
                 ):
                     status = _("Hàng lỗi")
                 elif line.internal_flow_state == "waiting_delivery":
-                    status = _("Chờ Supply Chain giao hàng")
+                    status = _("Chờ Kho tổng giao hàng")
                 elif line.internal_flow_state == "pending_check":
                     status = _("Chờ Kho tổng kiểm hàng")
                 elif line.internal_flow_state == "delivered":
@@ -601,7 +779,6 @@ class MerPurchaseRequestLine(models.Model):
     )
     def _compute_supply_metrics(self):
         quant_model = self.env["stock.quant"].sudo()
-        warehouse_model = self.env["stock.warehouse"].sudo()
         for line in self:
             line.central_on_hand_qty = 0.0
             line.central_available_qty = 0.0
@@ -612,14 +789,8 @@ class MerPurchaseRequestLine(models.Model):
                 continue
 
             company_id = line.request_company_id.id
-            request_wh = line.request_warehouse_id
-            warehouses = warehouse_model.search(
-                [
-                    ("company_id", "=", company_id),
-                    "|",
-                    ("mis_role", "in", ["central", "store"]),
-                    ("mis_role", "=", False),
-                ]
+            warehouses = line.request_id._get_relevant_supply_warehouses().filtered(
+                lambda wh: wh.company_id.id == company_id
             )
             breakdown = []
             for warehouse in warehouses:
@@ -631,11 +802,8 @@ class MerPurchaseRequestLine(models.Model):
                 )
                 qty = sum(quants.mapped("quantity"))
                 available = sum(quants.mapped("available_quantity"))
-                if warehouse.mis_role == "central":
-                    line.central_on_hand_qty += qty
-                    line.central_available_qty += available
-                elif warehouse != request_wh:
-                    line.other_warehouses_qty += qty
+                line.central_on_hand_qty += qty
+                line.central_available_qty += available
                 if qty or available:
                     breakdown.append("%s: %.2f / %.2f" % (warehouse.display_name, qty, available))
                 if line.source_warehouse_id and warehouse == line.source_warehouse_id:

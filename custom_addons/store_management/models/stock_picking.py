@@ -14,6 +14,7 @@ class StockPicking(models.Model):
     )
     store_route_type = fields.Selection(
         [
+            ("supplier_to_central", "NCC -> Kho tổng"),
             ("supplier_to_store", "NCC -> Cửa hàng"),
             ("central_to_store", "Kho tổng -> Cửa hàng"),
         ],
@@ -85,6 +86,18 @@ class StockPicking(models.Model):
             if (
                 picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id
+                and picking.picking_type_id.warehouse_id.mis_role == "central"
+                and picking.mer_request_id
+                and picking.mer_request_id.store_id
+            ):
+                store = picking.mer_request_id.store_id
+                route_type = "supplier_to_central"
+                route_label = _("NCC -> Kho tổng")
+                source_party = picking.partner_id.display_name or _("Nhà cung cấp")
+                source_document = picking.purchase_id.name or picking.origin or picking.name
+            elif (
+                picking.picking_type_code == "incoming"
+                and picking.picking_type_id.warehouse_id
                 and picking.picking_type_id.warehouse_id.mis_role == "store"
             ):
                 destination_warehouse = picking.picking_type_id.warehouse_id
@@ -116,6 +129,32 @@ class StockPicking(models.Model):
         non_receipt = self.filtered(lambda picking: not picking._is_store_receipt_for_qc())
         if non_receipt:
             raise UserError(_("Chỉ phiếu nhập hoặc phiếu điều chuyển vào kho cửa hàng mới được thực hiện QC."))
+
+    def _is_central_supplier_receipt(self):
+        self.ensure_one()
+        return bool(
+            self.picking_type_code == "incoming"
+            and self.picking_type_id.warehouse_id
+            and self.picking_type_id.warehouse_id.mis_role == "central"
+            and self.purchase_id
+            and self.mer_request_id
+        )
+
+    def _create_store_deliveries_from_central_receipts(self):
+        request_line_model = self.env["mer.purchase.request.line"]
+        for picking in self.filtered(lambda receipt: receipt._is_central_supplier_receipt() and receipt.state == "done"):
+            request_lines = request_line_model.search(
+                [
+                    ("request_id", "=", picking.mer_request_id.id),
+                    ("purchase_order_id", "=", picking.purchase_id.id),
+                    ("fulfillment_method", "=", "supplier_central"),
+                    ("internal_picking_id", "=", False),
+                ]
+            )
+            for request in request_lines.mapped("request_id"):
+                request._create_internal_pickings_for_lines(
+                    request_lines.filtered(lambda line: line.request_id == request)
+                )
 
     def _sync_related_mer_request_state(self):
         requests = (self.mapped("mer_request_id") | self.mapped("move_ids.picking_id.mer_request_id")).filtered(bool)
@@ -163,6 +202,7 @@ class StockPicking(models.Model):
         result = super().button_validate()
         completed_pickings = self.filtered(lambda picking: picking.state == "done")
         if completed_pickings:
+            completed_pickings._create_store_deliveries_from_central_receipts()
             request_lines = self.env["mer.purchase.request.line"].search(
                 [("internal_picking_id", "in", completed_pickings.ids)]
             )

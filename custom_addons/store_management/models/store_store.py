@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from odoo import Command, api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
@@ -430,6 +432,11 @@ class StoreProductLine(models.Model):
         digits="Product Unit of Measure",
         compute="_compute_stock_metrics",
     )
+    pending_replenishment_qty = fields.Float(
+        string="Đang chờ bổ sung",
+        digits="Product Unit of Measure",
+        compute="_compute_stock_metrics",
+    )
     suggested_replenishment_qty = fields.Float(
         string="Đề xuất bổ sung",
         digits="Product Unit of Measure",
@@ -458,9 +465,31 @@ class StoreProductLine(models.Model):
     @api.depends("product_id", "location_id", "min_qty", "max_qty")
     def _compute_stock_metrics(self):
         Quant = self.env["stock.quant"].sudo()
+        pending_qty_map = defaultdict(float)
+        active_states = ("draft", "submitted", "to_approve", "approved", "po_created")
+
+        relevant_lines = self.filtered(lambda line: line.store_id and line.product_id)
+        if relevant_lines:
+            request_lines = self.env["mer.purchase.request.line"].sudo().search(
+                [
+                    ("request_id.store_id", "in", relevant_lines.mapped("store_id").ids),
+                    ("product_id", "in", relevant_lines.mapped("product_id").ids),
+                    ("request_id.state", "in", active_states),
+                ]
+            )
+            for request_line in request_lines:
+                request = request_line.request_id
+                if not request.store_id:
+                    continue
+                if hasattr(request, "_is_line_logistically_completed") and request._is_line_logistically_completed(request_line):
+                    continue
+                pending_qty = request_line.approved_qty or request_line.product_qty
+                pending_qty_map[(request.store_id.id, request_line.product_id.id)] += pending_qty
+
         for line in self:
             current_qty = 0.0
             available_qty = 0.0
+            pending_qty = 0.0
             if line.product_id and line.location_id:
                 quants = Quant.search(
                     [
@@ -470,11 +499,14 @@ class StoreProductLine(models.Model):
                 )
                 current_qty = sum(quants.mapped("quantity"))
                 available_qty = sum(quants.mapped("available_quantity"))
+                pending_qty = pending_qty_map.get((line.store_id.id, line.product_id.id), 0.0)
             suggested_qty = 0.0
-            if current_qty < line.min_qty:
-                suggested_qty = max(line.max_qty - current_qty, 0.0)
+            effective_qty = available_qty + pending_qty
+            if effective_qty < line.min_qty:
+                suggested_qty = max(line.max_qty - effective_qty, 0.0)
             line.current_qty = current_qty
             line.available_qty = available_qty
+            line.pending_replenishment_qty = pending_qty
             line.suggested_replenishment_qty = suggested_qty
             line.needs_replenishment = suggested_qty > 0
 

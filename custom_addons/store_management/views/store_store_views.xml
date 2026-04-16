@@ -88,6 +88,7 @@
                                     <field name="max_qty"/>
                                     <field name="current_qty" readonly="1"/>
                                     <field name="available_qty" readonly="1"/>
+                                    <field name="pending_replenishment_qty" readonly="1"/>
                                     <field name="suggested_replenishment_qty" readonly="1"/>
                                     <button
                                         name="action_create_replenishment_pr"

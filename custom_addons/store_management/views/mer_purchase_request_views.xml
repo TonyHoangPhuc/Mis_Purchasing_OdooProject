@@ -74,7 +74,7 @@
                 <field name="line_ids" readonly="state != 'draft'">
                     <list editable="bottom">
                         <field name="product_id"/>
-                        <field name="product_qty"/>
+                        <field name="product_qty" string="Số lượng yêu cầu"/>
                         <field name="product_uom_id" readonly="1"/>
                     </list>
                 </field>
@@ -82,17 +82,19 @@
 
             <xpath expr="//page[@name='lines']" position="after">
                 <page string="Phương án xử lý" name="fulfillment" invisible="context.get('from_store_menu')">
-                    <field name="line_ids" nolabel="1" readonly="state not in ['submitted', 'approved', 'po_created']">
+                    <field name="line_ids" nolabel="1" readonly="state != 'submitted'">
                         <list editable="bottom" create="0" delete="0">
                             <field name="product_id" readonly="1"/>
-                            <field name="product_qty" readonly="1"/>
+                            <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="approved_qty" string="Số lượng được duyệt"/>
                             <field name="product_uom_id" readonly="1"/>
                             <field name="fulfillment_method"/>
-                            <field name="source_warehouse_id" invisible="fulfillment_method != 'internal'"/>
+                            <field name="source_warehouse_id" invisible="fulfillment_method not in ['internal', 'supplier_central']"/>
                             <field name="source_available_qty" readonly="1" invisible="fulfillment_method != 'internal'"/>
                             <field
                                 name="supplier_id"
-                                invisible="fulfillment_method != 'supplier'"
+                                invisible="fulfillment_method not in ['supplier', 'supplier_central']"
+                                domain="[('category_id.name', '=', 'NCC')]"
                                 context="{'only_supplier_contacts': True}"
                             />
                             <field name="route_status_display" readonly="1"/>
@@ -105,10 +107,10 @@
                     <field name="line_ids" nolabel="1" readonly="1">
                         <list create="0" delete="0">
                             <field name="product_id" readonly="1"/>
-                            <field name="product_qty" readonly="1"/>
+                            <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="approved_qty" string="Số lượng được duyệt" readonly="1"/>
                             <field name="central_on_hand_qty" readonly="1"/>
                             <field name="central_available_qty" readonly="1"/>
-                            <field name="other_warehouses_qty" readonly="1"/>
                             <field name="availability_breakdown" readonly="1"/>
                             <button name="action_view_supply_stock" type="object" string="Xem tồn" class="btn-link"/>
                         </list>
@@ -118,7 +120,8 @@
                     <field name="line_ids" nolabel="1" readonly="1">
                         <list create="0" delete="0">
                             <field name="product_id" readonly="1"/>
-                            <field name="product_qty" readonly="1"/>
+                            <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="approved_qty" string="Số lượng được duyệt" readonly="1"/>
                             <field name="fulfillment_method" readonly="1"/>
                             <field name="source_warehouse_id" readonly="1"/>
                             <field name="central_available_qty" readonly="1"/>
@@ -210,5 +213,64 @@
         <field name="search_view_id" ref="view_mer_purchase_request_search_central_check"/>
         <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created']), ('line_ids.fulfillment_method', '=', 'internal'), ('line_ids.internal_flow_state', '=', 'pending_check')]</field>
         <field name="context">{'central_check_menu': 1, 'search_default_pending_central_check': 1}</field>
+    </record>
+    <record id="view_mer_purchase_request_tree_order_management" model="ir.ui.view">
+        <field name="name">mer.purchase.request.tree.order.management</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <list default_order="date_request desc">
+                <field name="name" string="PR"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="date_request"/>
+                <field name="purchase_order_count" string="Số PO"/>
+                <field name="internal_picking_count" string="Số đơn nội bộ"/>
+                <field name="central_flow_status" string="Trạng thái kho tổng"/>
+                <field
+                    name="state"
+                    widget="badge"
+                    decoration-info="state == 'approved'"
+                    decoration-warning="state == 'po_created'"
+                    decoration-success="state == 'done'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_search_order_management" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.order.management</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="state"/>
+                <filter name="processing_requests" string="Đang xử lý" domain="[('state', 'in', ['approved', 'po_created'])]"/>
+                <filter name="done_requests" string="Hoàn tất" domain="[('state', '=', 'done')]"/>
+                <filter name="has_supplier_po" string="Có PO NCC" domain="[('line_ids.purchase_order_id', '!=', False)]"/>
+                <filter name="has_internal_transfer" string="Có đơn nội bộ" domain="[('line_ids.internal_picking_id', '!=', False)]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="warehouse_management.action_merchandise_purchase_orders" model="ir.actions.act_window">
+        <field name="name">Quản lý đơn mua hàng ( PO )</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_tree_order_management"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_order_management"/>
+        <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created', 'done'])]</field>
+        <field name="context">{'search_default_processing_requests': 1}</field>
+    </record>
+
+    <record id="merchandise_management.menu_merchandise_purchase_orders" model="ir.ui.menu">
+        <field name="name">Quản lý đơn mua hàng ( PO )</field>
+        <field name="action" ref="warehouse_management.action_merchandise_purchase_orders"/>
     </record>
 </odoo>

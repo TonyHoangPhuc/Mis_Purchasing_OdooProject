@@ -73,7 +73,7 @@
         <field name="arch" type="xml">
             <search>
                 <field name="name"/>
-                <filter name="suppliers_only" string="Nhà cung cấp" domain="[('sm_show_supplier_performance', '=', True)]"/>
+                <filter name="suppliers_only" string="Nhà cung cấp" domain="[('category_id.name', '=', 'NCC')]"/>
                 <filter name="low_otd" string="Tỷ lệ đúng hạn thấp" domain="[('on_time_delivery_rate', '&lt;', 90)]"/>
                 <filter name="low_quality" string="Chất lượng thấp" domain="[('quality_score', '&lt;', 95)]"/>
                 <separator/>
@@ -94,6 +94,18 @@
         <field name="context">{'search_default_suppliers_only': 1}</field>
     </record>
 
+    <record id="view_purchase_order_form_inherit_supplier_domain" model="ir.ui.view">
+        <field name="name">purchase.order.form.inherit.supplier.domain</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="attributes">
+                <attribute name="domain">[('category_id.name', '=', 'NCC')]</attribute>
+                <attribute name="context">{'only_supplier_contacts': True}</attribute>
+            </xpath>
+        </field>
+    </record>
+
     <menuitem
         id="menu_supplier_root"
         name="Supplier"
@@ -108,4 +120,8 @@
         sequence="10"
         groups="supplier_management.group_supplier_performance_user"
     />
+
+    <record id="menu_supplier_root" model="ir.ui.menu">
+        <field name="active" eval="False"/>
+    </record>
 </odoo>

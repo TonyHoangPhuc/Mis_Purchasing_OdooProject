@@ -9,6 +9,8 @@ class PurchaseOrder(models.Model):
         string="Yêu cầu Merchandise",
         compute="_compute_mer_request_id",
         compute_sudo=True,
+        store=True,
+        index=True,
     )
     wm_store_receipt_status = fields.Selection(
         [

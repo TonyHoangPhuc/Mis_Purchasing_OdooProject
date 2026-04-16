@@ -13,6 +13,7 @@
                 <field name="max_qty"/>
                 <field name="current_qty"/>
                 <field name="available_qty"/>
+                <field name="pending_replenishment_qty"/>
                 <field name="suggested_replenishment_qty"/>
                 <field name="active"/>
                 <button
@@ -44,6 +45,7 @@
                             <field name="max_qty"/>
                             <field name="current_qty" readonly="1"/>
                             <field name="available_qty" readonly="1"/>
+                            <field name="pending_replenishment_qty" readonly="1"/>
                             <field name="suggested_replenishment_qty" readonly="1"/>
                             <field name="active"/>
                         </group>

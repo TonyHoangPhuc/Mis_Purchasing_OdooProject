@@ -37,7 +37,13 @@
                         <group>
                             <field name="user_id" string="Người tạo" readonly="1"/>
                             <field name="warehouse_id" string="Cửa hàng" required="1"/>
-                            <field name="partner_id" string="Kho tổng / NCC" required="1"/>
+                            <field name="company_partner_id" invisible="1"/>
+                            <field
+                                name="partner_id"
+                                string="Kho tổng / NCC"
+                                required="1"
+                                domain="['|', ('category_id.name', '=', 'NCC'), ('id', '=', company_partner_id)]"
+                            />
                             <field name="date_request" string="Ngày yêu cầu"/>
                         </group>
                         <group>

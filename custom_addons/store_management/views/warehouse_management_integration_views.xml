@@ -2,6 +2,7 @@
 <odoo>
     <record id="warehouse_management.menu_warehouse_root" model="ir.ui.menu">
         <field name="name">Kho tổng</field>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
     </record>
 
     <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
@@ -12,6 +13,7 @@
 
     <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
         <field name="name">Nhận NCC và QC</field>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
     </record>
 
     <menuitem
@@ -47,6 +49,11 @@
                 <field name="store_receiving_store_id"/>
                 <field name="mer_request_id"/>
                 <filter
+                    name="route_supplier_to_central"
+                    string="NCC -> Kho tổng"
+                    domain="[('store_route_type', '=', 'supplier_to_central')]"
+                />
+                <filter
                     name="route_supplier_to_store"
                     string="NCC -> Cửa hàng"
                     domain="[('store_route_type', '=', 'supplier_to_store')]"
@@ -63,4 +70,99 @@
             </xpath>
         </field>
     </record>
+    <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
+        <field name="name">Nhập NCC &amp; QC</field>
+    </record>
+
+    <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
+        <field name="name">Nhập NCC &amp; QC</field>
+        <field name="sequence" eval="10"/>
+    </record>
+
+    <record id="action_warehouse_delivery_orders" model="ir.actions.act_window">
+        <field name="name">Đơn cần giao</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="supply_chain_management.view_picking_tree_store_delivery_supply_chain"/>
+        <field name="search_view_id" ref="supply_chain_management.view_picking_search_store_delivery_supply_chain"/>
+        <field name="domain">[('picking_type_code', '=', 'internal'), ('location_id.warehouse_id.mis_role', '=', 'central'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', 'not in', ['done', 'cancel'])]</field>
+        <field name="context">{'search_default_waiting_delivery': 1, 'create': False}</field>
+    </record>
+
+    <record id="action_warehouse_delivery_history" model="ir.actions.act_window">
+        <field name="name">Đơn đã chuyển</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="supply_chain_management.view_picking_tree_store_delivery_supply_chain"/>
+        <field name="search_view_id" ref="supply_chain_management.view_picking_search_store_delivery_supply_chain"/>
+        <field name="domain">[('picking_type_code', '=', 'internal'), ('location_id.warehouse_id.mis_role', '=', 'central'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', '=', 'done')]</field>
+        <field name="context">{'search_default_done_delivery': 1, 'create': False}</field>
+    </record>
+
+    <menuitem
+        id="menu_warehouse_delivery_orders"
+        name="Đơn cần giao"
+        parent="warehouse_management.menu_warehouse_root"
+        action="action_warehouse_delivery_orders"
+        sequence="15"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_warehouse_delivery_history"
+        name="Đơn đã chuyển"
+        parent="warehouse_management.menu_warehouse_root"
+        action="action_warehouse_delivery_history"
+        sequence="20"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_warehouse_stock_management"
+        name="Quản lý kho hàng"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="40"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <record id="stock.menu_stock_warehouse_mgmt" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+    </record>
+
+    <record id="stock.menu_stock_inventory_control" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+    </record>
+
+    <record id="stock.menu_warehouse_report" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+    </record>
+
+    <record id="stock.menu_stock_config_settings" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+    </record>
+
+    <record id="supply_chain_management.menu_supply_chain_root" model="ir.ui.menu">
+        <field name="active" eval="False"/>
+    </record>
+
+    <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_warehouse_mgmt" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_inventory_control" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_warehouse_report" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_config_settings" model="ir.ui.menu">
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_manager')])]"/>
+    </record>
+
 </odoo>

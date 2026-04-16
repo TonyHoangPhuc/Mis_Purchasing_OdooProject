@@ -153,4 +153,8 @@
         sequence="30"
         groups="supply_chain_management.group_supply_chain_user"
     />
+
+    <record id="menu_supply_chain_root" model="ir.ui.menu">
+        <field name="active" eval="False"/>
+    </record>
 </odoo>

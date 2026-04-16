@@ -32,6 +32,7 @@ class MerPurchaseRequest(models.Model):
     user_id = fields.Many2one('res.users', string='Người tạo', default=lambda self: self.env.user, tracking=True)
     manager_id = fields.Many2one('res.users', string='Người phê duyệt', tracking=True)
     partner_id = fields.Many2one('res.partner', string='Kho tổng / Nhà cung cấp', required=True)
+    company_partner_id = fields.Many2one('res.partner', compute='_compute_company_partner_id', readonly=True)
     warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
     date_request = fields.Date(string='Ngày yêu cầu', default=fields.Date.today)
     
@@ -48,19 +49,35 @@ class MerPurchaseRequest(models.Model):
                 vals['name'] = self.env['ir.sequence'].next_by_code('mer.purchase.request') or _('Mới')
         return super(MerPurchaseRequest, self).create(vals_list)
 
+    @api.depends('warehouse_id')
+    def _compute_company_partner_id(self):
+        for request in self:
+            company = request.warehouse_id.company_id or self.env.company
+            request.company_partner_id = company.partner_id
+
+    def _get_tagged_supplier_partners(self, product):
+        supplier_category = self.env['res.partner.category'].search([('name', '=', 'NCC')], limit=1)
+        partners = product.seller_ids.mapped('partner_id')
+        if supplier_category:
+            return partners.filtered(lambda partner: supplier_category in partner.category_id)
+        return self.env['res.partner']
+
     # Gợi ý NCC/Kho tổng dựa trên sản phẩm đầu tiên
     @api.onchange('line_ids')
     def _onchange_line_ids(self):
-        if self.line_ids and not self.partner_id:
+        domain = []
+        if self.line_ids:
             first_product = self.line_ids[0].product_id
-            if first_product:
-                if first_product.x_mer_supply_route == 'supplier_direct':
-                    seller = first_product.seller_ids[:1]
-                    if seller:
-                        self.partner_id = seller.partner_id.id
-                else:
-                    # Giao từ Kho tổng mặc định lấy theo Công ty
-                    self.partner_id = self.env.company.partner_id.id
+            if first_product and first_product.x_mer_supply_route == 'supplier_direct':
+                domain = [('category_id.name', '=', 'NCC')]
+                suppliers = self._get_tagged_supplier_partners(first_product)
+                if not self.partner_id or self.partner_id not in suppliers:
+                    self.partner_id = suppliers[:1].id or False
+            else:
+                company_partner = self.company_partner_id or self.env.company.partner_id
+                domain = [('id', '=', company_partner.id)] if company_partner else []
+                self.partner_id = company_partner
+        return {'domain': {'partner_id': domain}}
 
     # Gửi yêu cầu mua hàng
     def action_submit(self):

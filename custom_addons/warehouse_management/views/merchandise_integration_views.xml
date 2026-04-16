@@ -26,8 +26,16 @@
         <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
     </record>
 
+    <record id="action_merchandise_purchase_orders" model="ir.actions.act_window">
+        <field name="name">Đơn mua hàng (PO)</field>
+        <field name="res_model">purchase.order</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'search_default_has_mer_request': 1, 'search_default_group_by_mer_request': 1}</field>
+    </record>
+
     <record id="merchandise_management.menu_merchandise_purchase_orders" model="ir.ui.menu">
         <field name="active" eval="True"/>
+        <field name="action" ref="action_merchandise_purchase_orders"/>
         <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
     </record>
 
@@ -40,23 +48,19 @@
     </record>
 
     <record id="purchase.menu_procurement_management" model="ir.ui.menu">
-        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
-        <field name="sequence" eval="20"/>
+        <field name="active" eval="False"/>
     </record>
 
     <record id="purchase.menu_purchase_products" model="ir.ui.menu">
-        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
-        <field name="sequence" eval="30"/>
+        <field name="active" eval="False"/>
     </record>
 
     <record id="purchase.purchase_report_main" model="ir.ui.menu">
-        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
-        <field name="sequence" eval="90"/>
+        <field name="active" eval="False"/>
     </record>
 
     <record id="purchase.menu_purchase_config" model="ir.ui.menu">
-        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
-        <field name="sequence" eval="100"/>
+        <field name="active" eval="False"/>
     </record>
 
     <record id="purchase.menu_purchase_root" model="ir.ui.menu">
@@ -91,6 +95,7 @@
         <field name="inherit_id" ref="purchase.purchase_order_view_tree"/>
         <field name="arch" type="xml">
             <field name="invoice_status" position="before">
+                <field name="mer_request_id" string="PR Merchandise" optional="show"/>
                 <field
                     name="wm_store_receipt_status"
                     string="Trạng thái nhận hàng"
@@ -110,6 +115,9 @@
         <field name="model">purchase.order</field>
         <field name="inherit_id" ref="purchase.purchase_order_form"/>
         <field name="arch" type="xml">
+            <xpath expr="//field[@name='origin']" position="after">
+                <field name="mer_request_id" readonly="1" invisible="not mer_request_id"/>
+            </xpath>
             <xpath expr="//field[@name='invoice_status']" position="before">
                 <field
                     name="wm_store_receipt_status"
@@ -120,6 +128,19 @@
                     decoration-danger="wm_store_receipt_status == 'defective'"
                     decoration-muted="wm_store_receipt_status == 'no_receipt'"
                 />
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_purchase_order_search_inherit_mer_request" model="ir.ui.view">
+        <field name="name">purchase.order.search.inherit.mer.request</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.view_purchase_order_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <separator/>
+                <filter name="has_mer_request" string="Có PR Merchandise" domain="[('mer_request_id', '!=', False)]"/>
+                <filter name="group_by_mer_request" string="PR Merchandise" domain="[]" context="{'group_by': 'mer_request_id'}"/>
             </xpath>
         </field>
     </record>
