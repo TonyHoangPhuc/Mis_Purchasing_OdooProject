@@ -4,23 +4,24 @@
         <field name="name">store.product.line.tree</field>
         <field name="model">store.product.line</field>
         <field name="arch" type="xml">
-            <list default_order="store_id, product_id">
-                <field name="store_id"/>
-                <field name="warehouse_id"/>
-                <field name="product_id"/>
-                <field name="categ_id"/>
+            <list default_order="store_id, product_id" editable="bottom">
+                <field name="store_id" readonly="1" optional="show"/>
+                <field name="warehouse_id" readonly="1" optional="hide"/>
+                <field name="product_id" readonly="1"/>
+                <field name="categ_id" readonly="1" optional="hide"/>
                 <field name="min_qty"/>
                 <field name="max_qty"/>
-                <field name="current_qty"/>
-                <field name="available_qty"/>
-                <field name="pending_replenishment_qty"/>
-                <field name="suggested_replenishment_qty"/>
-                <field name="active"/>
+                <field name="current_qty" readonly="1" widget="progressbar" options="{'current_value': 'current_qty', 'max_value': 'max_qty'}"/>
+                <field name="available_qty" readonly="1" optional="show"/>
+                <field name="pending_replenishment_qty" readonly="1" optional="show"/>
+                <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty &gt; 0" decoration-success="suggested_replenishment_qty == 0"/>
+                <field name="active" optional="hide"/>
                 <button
                     name="action_create_replenishment_pr"
                     type="object"
                     string="Tạo PR"
-                    class="btn-link"
+                    icon="fa-shopping-cart"
+                    class="btn btn-sm btn-primary"
                     invisible="suggested_replenishment_qty &lt;= 0"
                 />
             </list>
@@ -71,6 +72,10 @@
                     <filter name="group_product" string="Sản phẩm" domain="[]" context="{'group_by': 'product_id'}"/>
                     <filter name="group_category" string="Ngành hàng" domain="[]" context="{'group_by': 'categ_id'}"/>
                 </group>
+                <searchpanel>
+                    <field name="store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="categ_id" icon="fa-tags" enable_counters="1" select="multi"/>
+                </searchpanel>
             </search>
         </field>
     </record>
@@ -80,6 +85,6 @@
         <field name="res_model">store.product.line</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_store_product_line_search"/>
-        <field name="context">{'search_default_group_store': 1}</field>
+        <field name="context">{}</field>
     </record>
 </odoo>

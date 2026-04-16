@@ -12,7 +12,6 @@
         "sale_stock",
         "merchandise_management",
         "warehouse_management",
-        "supply_chain_management",
     ],
     "data": [
         "security/store_security.xml",
@@ -21,9 +20,8 @@
         "views/store_product_views.xml",
         "views/mer_purchase_request_views.xml",
         "views/sale_order_views.xml",
-        "views/store_menu_views.xml",
         "views/warehouse_management_integration_views.xml",
-        "views/supply_chain_integration_views.xml",
+        "views/store_menu_views.xml",
     ],
     "installable": True,
     "application": True,

@@ -447,12 +447,6 @@ class StoreProductLine(models.Model):
         compute="_compute_stock_metrics",
         search="_search_needs_replenishment",
     )
-    allocation_rule_id = fields.Many2one(
-        "supply.chain.allocation.rule",
-        string="Quy tắc Supply Chain",
-        copy=False,
-        readonly=True,
-    )
 
     _sql_constraints = [
         (
@@ -518,63 +512,7 @@ class StoreProductLine(models.Model):
             if line.max_qty < line.min_qty:
                 raise ValidationError("Tồn tối đa phải lớn hơn hoặc bằng tồn tối thiểu.")
 
-    @api.model_create_multi
-    def create(self, vals_list):
-        lines = super().create(vals_list)
-        if not self.env.context.get("store_skip_sync_rule"):
-            lines._sync_supply_chain_rules()
-        return lines
 
-    def write(self, vals):
-        result = super().write(vals)
-        tracked_fields = {"store_id", "product_id", "min_qty", "max_qty", "active"}
-        if not self.env.context.get("store_skip_sync_rule") and tracked_fields.intersection(vals):
-            self._sync_supply_chain_rules()
-        return result
-
-    def unlink(self):
-        rules = self.mapped("allocation_rule_id")
-        result = super().unlink()
-        if rules:
-            rules.write({"active": False})
-        return result
-
-    def _sync_supply_chain_rules(self):
-        Rule = self.env["supply.chain.allocation.rule"].sudo()
-        for line in self:
-            central_warehouse = line.store_id._get_central_warehouse()
-            if not central_warehouse:
-                continue
-
-            values = {
-                "partner_id": line.partner_id.id,
-                "warehouse_id": central_warehouse.id,
-                "location_id": line.location_id.id,
-                "product_id": line.product_id.id,
-                "min_qty": line.min_qty,
-                "max_qty": line.max_qty,
-                "active": line.active,
-            }
-
-            rule = line.allocation_rule_id
-            if not rule:
-                rule = Rule.search(
-                    [
-                        ("partner_id", "=", line.partner_id.id),
-                        ("warehouse_id", "=", central_warehouse.id),
-                        ("location_id", "=", line.location_id.id),
-                        ("product_id", "=", line.product_id.id),
-                    ],
-                    limit=1,
-                )
-
-            if rule:
-                rule.write(values)
-            else:
-                rule = Rule.create(values)
-
-            if line.allocation_rule_id != rule:
-                line.with_context(store_skip_sync_rule=True).write({"allocation_rule_id": rule.id})
 
     def _search_needs_replenishment(self, operator, value):
         if operator not in ("=", "!=") or not isinstance(value, bool):

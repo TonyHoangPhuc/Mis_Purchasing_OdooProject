@@ -1,4 +1,4 @@
-from odoo import api, fields, models
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 
@@ -76,23 +76,11 @@ class StockPicking(models.Model):
         for picking in self:
             picking.wm_is_incoming_receipt = picking.picking_type_code == "incoming"
 
-    @api.depends("purchase_id", "purchase_id.origin", "origin")
+    @api.depends("purchase_id", "purchase_id.mer_request_id", "origin")
     def _compute_mer_request_id(self):
-        requests_by_purchase = {}
-        purchase_ids = self.mapped("purchase_id").ids
-        if purchase_ids:
-            purchase_requests = self.env["mer.purchase.request"].sudo().search([("purchase_id", "in", purchase_ids)])
-            requests_by_purchase = {
-                request.purchase_id.id: request
-                for request in purchase_requests
-                if request.purchase_id
-            }
-
         origins = {
             origin
-            for origin in (
-                self.mapped("origin") + self.mapped("purchase_id.origin")
-            )
+            for origin in (self.mapped("origin") + self.mapped("purchase_id.origin"))
             if origin
         }
         requests_by_name = {}
@@ -103,8 +91,8 @@ class StockPicking(models.Model):
             }
 
         for picking in self:
-            request = requests_by_purchase.get(picking.purchase_id.id)
-            if not request and picking.purchase_id.origin:
+            request = picking.purchase_id.mer_request_id if picking.purchase_id else None
+            if not request and picking.purchase_id and picking.purchase_id.origin:
                 request = requests_by_name.get(picking.purchase_id.origin)
             if not request and picking.origin:
                 request = requests_by_name.get(picking.origin)
@@ -139,6 +127,14 @@ class StockPicking(models.Model):
         self.ensure_one()
         return bool(self.wm_qc_note or any(move.wm_damage_note for move in self.move_ids))
 
+    def _is_wm_supplier_receipt(self):
+        self.ensure_one()
+        return bool(self.picking_type_code == "incoming" and self.partner_id)
+
+    def _is_wm_internal_transfer(self):
+        self.ensure_one()
+        return self.picking_type_code == "internal"
+
     def action_start_qc(self):
         self._check_wm_incoming_receipt()
         for picking in self:
@@ -150,6 +146,7 @@ class StockPicking(models.Model):
 
     def action_qc_pass(self):
         self._check_wm_incoming_receipt()
+        pickings_to_validate = self.env["stock.picking"]
         for picking in self:
             if picking.wm_qc_status != "checking":
                 raise UserError("Chỉ phiếu đang kiểm tra mới có thể đánh dấu đạt.")
@@ -162,6 +159,10 @@ class StockPicking(models.Model):
                     "wm_qc_checked_on": fields.Datetime.now(),
                 }
             )
+            if picking.state not in ("done", "cancel"):
+                pickings_to_validate |= picking
+        if pickings_to_validate:
+            return pickings_to_validate.button_validate()
 
     def action_qc_reject(self):
         self._check_wm_incoming_receipt()
@@ -177,3 +178,133 @@ class StockPicking(models.Model):
                     "wm_qc_checked_on": fields.Datetime.now(),
                 }
             )
+            picking._action_process_qc_rejection()
+
+    def _action_process_qc_rejection(self):
+        """Nếu reject trước validate thì hủy phiếu để tồn kho không đổi."""
+        self.ensure_one()
+        if self.state != "done":
+            self.action_cancel()
+            self.message_post(
+                body=_(
+                    "QC không đạt. Phiếu đã được hủy trước khi nhập/xuất kho, vì vậy tồn kho không thay đổi."
+                )
+            )
+            return False
+
+        if self._is_wm_internal_transfer():
+            return self._action_create_return_picking_to_origin()
+        if self._is_wm_supplier_receipt():
+            return self._action_create_return_picking_to_supplier()
+        return False
+
+    def _action_create_return_picking_to_supplier(self):
+        """Tạo phiếu trả hàng về nhà cung cấp khi phiếu nhập hoàn tất bị reject."""
+        self.ensure_one()
+        damaged_moves = self.move_ids.filtered(lambda move: move.state != "cancel" and move.wm_damaged_qty > 0)
+        if not damaged_moves:
+            damaged_moves = self.move_ids.filtered(lambda move: move.state != "cancel" and move.quantity > 0)
+        if not damaged_moves:
+            return False
+
+        return_location = self.location_id
+        return_picking_type = self.env["stock.picking.type"].search(
+            [
+                ("code", "=", "outgoing"),
+                ("warehouse_id", "=", self.picking_type_id.warehouse_id.id),
+            ],
+            limit=1,
+        )
+        if not return_picking_type:
+            return False
+
+        return_moves = []
+        for move in damaged_moves:
+            return_qty = move.wm_damaged_qty if move.wm_damaged_qty > 0 else move.quantity
+            return_moves.append(
+                (
+                    0,
+                    0,
+                    {
+                        "product_id": move.product_id.id,
+                        "product_uom_qty": return_qty,
+                        "product_uom": move.product_uom.id,
+                        "location_id": self.location_dest_id.id,
+                        "location_dest_id": return_location.id,
+                        "description_picking": _("[TRẢ HÀNG LỖI] %s - QC không đạt từ phiếu %s")
+                        % (move.product_id.display_name, self.name),
+                    },
+                )
+            )
+
+        if not return_moves:
+            return False
+
+        return_picking = self.env["stock.picking"].sudo().create(
+            {
+                "picking_type_id": return_picking_type.id,
+                "partner_id": self.partner_id.id,
+                "location_id": self.location_dest_id.id,
+                "location_dest_id": return_location.id,
+                "origin": _("Trả hàng lỗi QC: %s") % self.name,
+                "move_ids": return_moves,
+            }
+        )
+        return_picking.action_confirm()
+        self.message_post(
+            body=_(
+                "QC không đạt. Đã tạo phiếu trả hàng <a href='#' data-oe-model='stock.picking' data-oe-id='%d'>%s</a> về nhà cung cấp."
+            )
+            % (return_picking.id, return_picking.name),
+            subject=_("QC không đạt - Đã tạo phiếu trả hàng"),
+        )
+        return return_picking
+
+    def _action_create_return_picking_to_origin(self):
+        """Tạo phiếu hoàn trả nội bộ cho phiếu điều chuyển nội bộ đã hoàn tất."""
+        self.ensure_one()
+        destination_warehouse = self.location_dest_id.warehouse_id
+        source_warehouse = self.location_id.warehouse_id
+        if not destination_warehouse or not source_warehouse:
+            return False
+
+        return_moves = []
+        for move in self.move_ids.filtered(lambda current_move: current_move.state != "cancel" and current_move.quantity > 0):
+            return_moves.append(
+                (
+                    0,
+                    0,
+                    {
+                        "product_id": move.product_id.id,
+                        "product_uom_qty": move.quantity,
+                        "product_uom": move.product_uom.id,
+                        "location_id": destination_warehouse.lot_stock_id.id,
+                        "location_dest_id": source_warehouse.lot_stock_id.id,
+                        "description_picking": _("[HOÀN TRẢ NỘI BỘ] %s - Từ phiếu %s")
+                        % (move.product_id.display_name, self.name),
+                    },
+                )
+            )
+
+        if not return_moves:
+            return False
+
+        return_picking = self.env["stock.picking"].sudo().create(
+            {
+                "partner_id": self.partner_id.id,
+                "picking_type_id": destination_warehouse.int_type_id.id,
+                "location_id": destination_warehouse.lot_stock_id.id,
+                "location_dest_id": source_warehouse.lot_stock_id.id,
+                "origin": _("Hoàn trả nội bộ QC: %s") % self.name,
+                "move_ids": return_moves,
+            }
+        )
+        return_picking.action_confirm()
+        self.message_post(
+            body=_(
+                "QC không đạt. Đã tạo phiếu hoàn trả nội bộ <a href='#' data-oe-model='stock.picking' data-oe-id='%d'>%s</a>."
+            )
+            % (return_picking.id, return_picking.name),
+            subject=_("QC không đạt - Đã tạo phiếu hoàn trả nội bộ"),
+        )
+        return return_picking

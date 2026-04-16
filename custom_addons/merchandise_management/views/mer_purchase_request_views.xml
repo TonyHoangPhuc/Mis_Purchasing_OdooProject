@@ -33,6 +33,13 @@
                     <div class="oe_title">
                         <h1><field name="name" readonly="1"/></h1>
                     </div>
+                <div class="oe_button_box" name="button_box">
+                        <button name="action_view_purchase_orders" type="object"
+                                class="oe_stat_button" icon="fa-shopping-cart"
+                                invisible="purchase_order_count == 0">
+                            <field name="purchase_order_count" widget="statinfo" string="Đơn PO"/>
+                        </button>
+                    </div>
                     <group>
                         <group>
                             <field name="user_id" string="Người tạo" readonly="1"/>
@@ -48,7 +55,6 @@
                         </group>
                         <group>
                             <field name="manager_id" string="Người duyệt" readonly="1"/>
-                            <field name="purchase_id" string="Đơn PO liên quan" readonly="1" invisible="not purchase_id"/>
                         </group>
                     </group>
                     <notebook>
@@ -76,7 +82,8 @@
                 <field name="warehouse_id" string="Cửa hàng"/>
                 <field name="user_id" string="Người tạo"/>
                 <field name="date_request" string="Ngày yêu cầu"/>
-                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'submitted'" decoration-success="state in ['approved', 'done']" decoration-warning="state == 'po_created'"/>
+                <field name="purchase_order_count" string="Số PO" optional="show"/>
+                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'submitted'" decoration-success="state == 'approved' or state == 'done'" decoration-warning="state == 'po_created'"/>
             </list>
         </field>
     </record>
@@ -85,6 +92,8 @@
     <record id="action_mer_purchase_request" model="ir.actions.act_window">
         <field name="name">Yêu cầu mua hàng (PR)</field>
         <field name="res_model">mer.purchase.request</field>
-        <field name="view_mode">list,form</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="merchandise_management.view_mer_purchase_request_kanban"/>
+        <field name="search_view_id" ref="merchandise_management.view_mer_purchase_request_search_enhanced"/>
     </record>
 </odoo>

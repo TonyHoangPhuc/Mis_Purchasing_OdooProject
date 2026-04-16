@@ -41,22 +41,32 @@ class MerPurchaseRequest(models.Model):
     purchase_order_count = fields.Integer(
         string="PO",
         compute="_compute_document_counts",
+        search="_search_purchase_order_count",
     )
     internal_line_count = fields.Integer(
         string="Dòng nội bộ",
         compute="_compute_internal_flow_metrics",
+        store=True,
     )
     pending_central_check_count = fields.Integer(
         string="Chờ Kho tổng kiểm",
         compute="_compute_internal_flow_metrics",
+        store=True,
     )
     waiting_delivery_count = fields.Integer(
         string="Chờ Supply Chain giao",
         compute="_compute_internal_flow_metrics",
+        store=True,
+    )
+    insufficient_stock_count = fields.Integer(
+        string="Chưa đủ hàng",
+        compute="_compute_internal_flow_metrics",
+        store=True,
     )
     central_flow_status = fields.Char(
         string="Trạng thái Kho tổng",
         compute="_compute_internal_flow_metrics",
+        store=True,
     )
     company_id = fields.Many2one(
         "res.company",
@@ -147,7 +157,9 @@ class MerPurchaseRequest(models.Model):
     )
     def _compute_internal_flow_metrics(self):
         for request in self:
-            internal_lines = request.line_ids.filtered(lambda line: line.fulfillment_method == "internal")
+            internal_lines = request.line_ids.filtered(
+                lambda line: line.fulfillment_method in ("internal", "supplier_central")
+            )
             central_lines = request.line_ids.filtered(
                 lambda line: line.fulfillment_method in ("internal", "supplier_central")
             )
@@ -155,13 +167,15 @@ class MerPurchaseRequest(models.Model):
             request.pending_central_check_count = len(
                 internal_lines.filtered(lambda line: line.internal_flow_state == "pending_check")
             )
+            request.insufficient_stock_count = len(
+                internal_lines.filtered(lambda line: line.internal_flow_state == "waiting_stock")
+            )
             waiting_receipt_count = len(
                 central_lines.filtered(
                     lambda line: line.fulfillment_method == "supplier_central"
                     and line.purchase_order_id
                     and not line.purchase_order_id.picking_ids.filtered(
-                        lambda picking: picking.state != "cancel"
-                        and picking.picking_type_code == "incoming"
+                        lambda picking: picking.picking_type_code == "incoming"
                         and picking.picking_type_id.warehouse_id
                         and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
                         and (picking.state == "done" or picking.wm_qc_status == "rejected")
@@ -180,8 +194,7 @@ class MerPurchaseRequest(models.Model):
                 or (
                     line.fulfillment_method == "supplier_central"
                     and line.purchase_order_id.picking_ids.filtered(
-                        lambda picking: picking.state != "cancel"
-                        and picking.picking_type_code == "incoming"
+                        lambda picking: picking.picking_type_code == "incoming"
                         and picking.picking_type_id.warehouse_id
                         and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
                         and picking.wm_qc_status == "rejected"
@@ -192,8 +205,10 @@ class MerPurchaseRequest(models.Model):
 
             if not central_lines:
                 request.central_flow_status = _("Không qua Kho tổng")
+            elif request.insufficient_stock_count:
+                request.central_flow_status = _("Kho tổng chưa đủ hàng")
             elif request.pending_central_check_count:
-                request.central_flow_status = _("Chờ Kho tổng kiểm hàng")
+                request.central_flow_status = _("Chờ Kho tổng kiểm hàng để giao")
             elif waiting_receipt_count:
                 request.central_flow_status = _("Chờ NCC giao Kho tổng")
             elif request.waiting_delivery_count:
@@ -285,8 +300,8 @@ class MerPurchaseRequest(models.Model):
     def _get_pending_internal_lines(self):
         self.ensure_one()
         return self.line_ids.filtered(
-            lambda line: line.fulfillment_method == "internal"
-            and line.internal_flow_state == "pending_check"
+            lambda line: line.fulfillment_method in ("internal", "supplier_central")
+            and line.internal_flow_state in ("pending_check", "waiting_stock")
             and not line.internal_picking_id
         )
 
@@ -296,8 +311,7 @@ class MerPurchaseRequest(models.Model):
             if not line.purchase_order_id:
                 return False
             receipt_pickings = line.purchase_order_id.picking_ids.filtered(
-                lambda picking: picking.state != "cancel"
-                and picking.picking_type_code == "incoming"
+                lambda picking: picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id == line.request_warehouse_id
             )
             return bool(
@@ -310,8 +324,7 @@ class MerPurchaseRequest(models.Model):
             if not line.purchase_order_id:
                 return False
             receipt_pickings = line.purchase_order_id.picking_ids.filtered(
-                lambda picking: picking.state != "cancel"
-                and picking.picking_type_code == "incoming"
+                lambda picking: picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id
                 and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
             )
@@ -354,7 +367,7 @@ class MerPurchaseRequest(models.Model):
             source_warehouse = line.source_warehouse_id or self._get_default_internal_source_warehouse()
             if not source_warehouse:
                 raise UserError(
-                    _("KhÃ´ng xÃ¡c Ä‘á»‹nh Ä‘Æ°á»£c kho nguá»“n Ä‘á»ƒ chuyá»ƒn hÃ ng cho PR %s.") % self.display_name
+                    _("Không xác định được kho nguồn để chuyển hàng cho PR %s.") % self.display_name
                 )
             grouped_lines[source_warehouse.id] |= line
 
@@ -510,8 +523,6 @@ class MerPurchaseRequest(models.Model):
         if internal_lines:
             internal_lines.with_context(store_skip_sync_rule=True).write({"internal_flow_state": "pending_check"})
 
-        if created_orders:
-            self.purchase_id = created_orders[0]
         if created_orders or internal_lines:
             self.state = "po_created"
 
@@ -528,19 +539,31 @@ class MerPurchaseRequest(models.Model):
         self._ensure_approved_quantities()
         pending_lines = self._get_pending_internal_lines()
         if not pending_lines:
-            raise UserError(_("PR này không có dòng nội bộ nào đang chờ Kho tổng kiểm hàng."))
+            raise UserError(_("PR này không có dòng nào đang chờ Kho tổng kiểm hàng để giao."))
 
         insufficient_lines = pending_lines.filtered(lambda line: line.source_available_qty < line.approved_qty)
         if insufficient_lines:
-            raise UserError(
-                _(
-                    "Kho tổng chưa đủ hàng cho các sản phẩm: %s. "
-                    "Theo quy trình hiện tại, không được giao thiếu nên PR sẽ tiếp tục ở trạng thái Chờ đủ hàng."
+            insufficient_lines.with_context(store_skip_sync_rule=True).write({"internal_flow_state": "waiting_stock"})
+            available_lines = pending_lines - insufficient_lines
+            if available_lines:
+                available_lines.with_context(store_skip_sync_rule=True).write({"internal_flow_state": "pending_check"})
+            self.message_post(
+                body=_(
+                    "Kho tổng chưa đủ hàng để giao cho các sản phẩm: %s. Đơn được tạm giữ ở trạng thái Chưa đủ hàng."
                 )
                 % ", ".join(insufficient_lines.mapped("product_id.display_name"))
             )
+            return {
+                "type": "ir.actions.act_window",
+                "res_model": "mer.purchase.request",
+                "res_id": self.id,
+                "view_mode": "form",
+                "target": "current",
+                "context": dict(self.env.context, central_check_menu=1),
+            }
 
         self._create_internal_pickings_for_lines(pending_lines)
+        self.message_post(body=_("Kho tổng đã kiểm đủ hàng và tạo phiếu giao cho cửa hàng."))
 
         return {
             "type": "ir.actions.act_window",
@@ -609,6 +632,7 @@ class MerPurchaseRequestLine(models.Model):
             ("not_applicable", "Không áp dụng"),
             ("pending_check", "Chờ Kho tổng kiểm"),
             ("waiting_receipt", "Chờ NCC giao Kho tổng"),
+            ("waiting_stock", "Chưa đủ hàng"),
             ("waiting_delivery", "Chờ Kho tổng giao"),
             ("rejected", "Hàng lỗi"),
             ("delivered", "Đã giao cửa hàng"),
@@ -717,8 +741,7 @@ class MerPurchaseRequestLine(models.Model):
             if line.fulfillment_method == "supplier":
                 if line.purchase_order_id:
                     receipt_pickings = line.purchase_order_id.picking_ids.filtered(
-                        lambda picking: picking.state != "cancel"
-                        and picking.picking_type_code == "incoming"
+                        lambda picking: picking.picking_type_code == "incoming"
                         and picking.picking_type_id.warehouse_id == line.request_warehouse_id
                     )
                     if receipt_pickings.filtered(lambda picking: picking.state == "done"):
@@ -734,8 +757,7 @@ class MerPurchaseRequestLine(models.Model):
             elif line.fulfillment_method == "supplier_central":
                 if line.purchase_order_id:
                     receipt_pickings = line.purchase_order_id.picking_ids.filtered(
-                        lambda picking: picking.state != "cancel"
-                        and picking.picking_type_code == "incoming"
+                        lambda picking: picking.picking_type_code == "incoming"
                         and picking.picking_type_id.warehouse_id
                         and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
                     )
@@ -745,8 +767,10 @@ class MerPurchaseRequestLine(models.Model):
                         status = _("Cửa hàng đã nhận hàng")
                     elif line.internal_picking_id:
                         status = _("Chờ Kho tổng giao hàng")
+                    elif line.internal_flow_state == "waiting_stock":
+                        status = _("Kho tổng chưa đủ hàng để giao")
                     elif receipt_pickings.filtered(lambda picking: picking.state == "done"):
-                        status = _("Kho tổng đã nhận, chờ tạo điều chuyển")
+                        status = _("Kho tổng đã nhận, chờ kiểm hàng để giao")
                     elif receipt_pickings:
                         status = _("Chờ Kho tổng QC hàng NCC")
                     else:
@@ -763,8 +787,10 @@ class MerPurchaseRequestLine(models.Model):
                     status = _("Hàng lỗi")
                 elif line.internal_flow_state == "waiting_delivery":
                     status = _("Chờ Kho tổng giao hàng")
+                elif line.internal_flow_state == "waiting_stock":
+                    status = _("Kho tổng chưa đủ hàng để giao")
                 elif line.internal_flow_state == "pending_check":
-                    status = _("Chờ Kho tổng kiểm hàng")
+                    status = _("Chờ Kho tổng kiểm hàng để giao")
                 elif line.internal_flow_state == "delivered":
                     status = _("Cửa hàng đã nhận hàng")
                 else:

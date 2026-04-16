@@ -21,19 +21,11 @@ class PurchaseOrder(models.Model):
         ],
         string="Trạng thái nhận hàng",
         compute="_compute_wm_store_receipt_status",
+        store=True,
     )
 
     @api.depends("origin")
     def _compute_mer_request_id(self):
-        requests_by_purchase = {}
-        if self.ids:
-            purchase_requests = self.env["mer.purchase.request"].sudo().search([("purchase_id", "in", self.ids)])
-            requests_by_purchase = {
-                request.purchase_id.id: request
-                for request in purchase_requests
-                if request.purchase_id
-            }
-
         origins = [origin for origin in self.mapped("origin") if origin]
         requests_by_name = {}
         if origins:
@@ -43,7 +35,7 @@ class PurchaseOrder(models.Model):
             }
 
         for order in self:
-            order.mer_request_id = requests_by_purchase.get(order.id) or requests_by_name.get(order.origin)
+            order.mer_request_id = requests_by_name.get(order.origin)
 
     @api.depends(
         "picking_ids.state",
@@ -53,20 +45,22 @@ class PurchaseOrder(models.Model):
     )
     def _compute_wm_store_receipt_status(self):
         for order in self:
-            receipt_pickings = order.picking_ids.filtered(
-                lambda picking: picking.state != "cancel" and picking.picking_type_code == "incoming"
-            )
+            receipt_pickings = order.picking_ids.filtered(lambda picking: picking.picking_type_code == "incoming")
             store_receipts = receipt_pickings.filtered(
                 lambda picking: picking.picking_type_id.warehouse_id
                 and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "store"
             )
             relevant_pickings = store_receipts or receipt_pickings
+            active_pickings = relevant_pickings.filtered(lambda picking: picking.state != "cancel")
+            rejected_pickings = relevant_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected")
 
             if not relevant_pickings:
                 order.wm_store_receipt_status = "no_receipt"
             elif relevant_pickings.filtered(lambda picking: picking.state == "done"):
                 order.wm_store_receipt_status = "received"
-            elif relevant_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
+            elif rejected_pickings:
                 order.wm_store_receipt_status = "defective"
-            else:
+            elif active_pickings:
                 order.wm_store_receipt_status = "pending_qc"
+            else:
+                order.wm_store_receipt_status = "no_receipt"

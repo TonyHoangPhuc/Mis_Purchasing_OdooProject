@@ -1,7 +1,0 @@
-id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_supply_chain_allocation_rule_user,supply.chain.allocation.rule.user,model_supply_chain_allocation_rule,group_supply_chain_user,1,1,1,0
-access_supply_chain_allocation_rule_manager,supply.chain.allocation.rule.manager,model_supply_chain_allocation_rule,group_supply_chain_manager,1,1,1,1
-access_supply_chain_allocation_plan_user,supply.chain.allocation.plan.user,model_supply_chain_allocation_plan,group_supply_chain_user,1,1,1,0
-access_supply_chain_allocation_plan_manager,supply.chain.allocation.plan.manager,model_supply_chain_allocation_plan,group_supply_chain_manager,1,1,1,1
-access_supply_chain_allocation_line_user,supply.chain.allocation.line.user,model_supply_chain_allocation_line,group_supply_chain_user,1,0,0,0
-access_supply_chain_allocation_line_manager,supply.chain.allocation.line.manager,model_supply_chain_allocation_line,group_supply_chain_manager,1,1,1,1

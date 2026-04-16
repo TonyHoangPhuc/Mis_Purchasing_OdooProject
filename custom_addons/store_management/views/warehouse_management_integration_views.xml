@@ -5,25 +5,72 @@
         <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
     </record>
 
-    <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
-        <field name="name">Nhập NCC và QC Kho tổng</field>
-        <field name="domain">[('picking_type_code', '=', 'incoming'), ('picking_type_id.warehouse_id.mis_role', '=', 'central')]</field>
-        <field name="context">{'search_default_incoming_only': 1}</field>
-    </record>
+    <menuitem
+        id="menu_warehouse_check_requests"
+        name="Đơn cần kiểm hàng"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="5"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
 
     <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
-        <field name="name">Nhận NCC và QC</field>
+        <field name="name">NCC -&gt; Kho tổng</field>
+        <field name="parent_id" ref="store_management.menu_warehouse_check_requests"/>
+        <field name="sequence" eval="10"/>
         <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
     </record>
 
     <menuitem
         id="menu_warehouse_central_check_requests"
-        name="Đơn cần kiểm hàng"
-        parent="warehouse_management.menu_warehouse_root"
-        action="store_management.action_central_stock_requests"
-        sequence="5"
+        name="Kho tổng -&gt; Cửa hàng"
+        parent="store_management.menu_warehouse_check_requests"
+        sequence="20"
         groups="warehouse_management.group_receiving_qc_user"
     />
+
+    <menuitem
+        id="menu_warehouse_pending_deliveries"
+        name="Đơn cần giao"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="15"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_warehouse_completed_deliveries"
+        name="Đơn đã giao"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="20"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_warehouse_stock_management"
+        name="Quản lý kho hàng"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="40"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <record id="stock.menu_stock_warehouse_mgmt" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_inventory_control" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_warehouse_report" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_config_settings" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_manager')])]"/>
+    </record>
 
     <record id="view_receiving_qc_tree_inherit_store_context" model="ir.ui.view">
         <field name="name">stock.picking.receiving.qc.tree.inherit.store.context</field>
@@ -33,7 +80,6 @@
             <xpath expr="//field[@name='name']" position="after">
                 <field name="store_receiving_store_id" optional="show"/>
                 <field name="store_route_label" optional="show"/>
-                <field name="store_source_party_display" optional="show"/>
                 <field name="mer_request_id" optional="show"/>
                 <field name="store_source_document_ref" optional="show"/>
             </xpath>
@@ -50,119 +96,278 @@
                 <field name="mer_request_id"/>
                 <filter
                     name="route_supplier_to_central"
-                    string="NCC -> Kho tổng"
+                    string="NCC -&gt; Kho tổng"
                     domain="[('store_route_type', '=', 'supplier_to_central')]"
                 />
-                <filter
-                    name="route_supplier_to_store"
-                    string="NCC -> Cửa hàng"
-                    domain="[('store_route_type', '=', 'supplier_to_store')]"
-                />
-                <filter
-                    name="route_central_to_store"
-                    string="Kho tổng -> Cửa hàng"
-                    domain="[('store_route_type', '=', 'central_to_store')]"
-                />
+                <searchpanel>
+                    <field name="wm_qc_status" icon="fa-check-square-o" enable_counters="1"/>
+                    <field name="store_receiving_store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                </searchpanel>
             </xpath>
             <xpath expr="//group" position="inside">
-                <filter name="group_receiving_store" string="Cửa hàng nhận" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
+                <filter name="group_receiving_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
                 <filter name="group_route" string="Nguồn hàng" domain="[]" context="{'group_by': 'store_route_type'}"/>
+                <filter name="group_month" string="Tháng giao" domain="[]" context="{'group_by': 'scheduled_date:month'}"/>
             </xpath>
         </field>
     </record>
+
+    <record id="view_warehouse_receiving_qc_kanban" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.receiving.kanban</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <kanban class="o_kanban_mobile" sample="1" default_group_by="wm_qc_status" default_order="scheduled_date asc">
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <field name="store_source_document_ref"/>
+                <field name="wm_qc_status"/>
+                <field name="wm_expected_qty"/>
+                <field name="wm_damaged_qty"/>
+                <field name="wm_discrepancy_qty"/>
+                <field name="scheduled_date"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click #{record.wm_qc_status.raw_value == 'passed' ? 'border-success' : (record.wm_qc_status.raw_value == 'rejected' ? 'border-danger' : 'border-warning')}">
+                            <div class="o_kanban_record_top mb8">
+                                <div class="o_kanban_record_headings">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="partner_id"/>
+                                    </strong>
+                                    <div class="text-muted" t-if="record.store_receiving_store_id.value">
+                                        <i class="fa fa-building-o mr4" title="Cửa hàng nhận"/> <field name="store_receiving_store_id"/>
+                                    </div>
+                                </div>
+                                <field name="wm_qc_status" widget="badge"
+                                    decoration-secondary="wm_qc_status == 'draft'"
+                                    decoration-warning="wm_qc_status == 'checking'"
+                                    decoration-success="wm_qc_status == 'passed'"
+                                    decoration-danger="wm_qc_status == 'rejected'"
+                                />
+                            </div>
+                            <div class="o_kanban_record_body">
+                                <div class="text-muted mb4">
+                                    <i class="fa fa-file-text-o mr4" title="Chứng từ nguồn"/> <field name="store_source_document_ref"/>
+                                </div>
+                                <div class="text-muted mb4" t-if="record.mer_request_id.value">
+                                    <i class="fa fa-link mr4" title="PR nguồn"/> <field name="mer_request_id"/>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <span>SL dự kiến: <field name="wm_expected_qty"/></span>
+                                    <span class="text-danger" t-if="record.wm_damaged_qty.raw_value &gt; 0">
+                                        Lỗi: <field name="wm_damaged_qty"/>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="o_kanban_record_bottom mt8">
+                                <div class="oe_kanban_bottom_left">
+                                    <span t-if="record.wm_discrepancy_qty.raw_value != 0">Lệch: <field name="wm_discrepancy_qty"/></span>
+                                </div>
+                                <div class="oe_kanban_bottom_right">
+                                    <field name="scheduled_date" widget="date"/>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
     <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
-        <field name="name">Nhập NCC &amp; QC</field>
+        <field name="name">NCC -&gt; Kho tổng</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_receiving_qc_kanban"/>
+        <field name="search_view_id" ref="warehouse_management.view_receiving_qc_search"/>
+        <field name="domain">[('picking_type_code', '=', 'incoming'), ('picking_type_id.warehouse_id.mis_role', '=', 'central')]</field>
+        <field name="context">{'search_default_incoming_only': 1}</field>
     </record>
 
-    <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
-        <field name="name">Nhập NCC &amp; QC</field>
-        <field name="sequence" eval="10"/>
+    <record id="view_warehouse_central_check_kanban" model="ir.ui.view">
+        <field name="name">mer.purchase.request.warehouse.central.check.kanban</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="central_flow_status" default_order="date_request desc" sample="1">
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="date_request"/>
+                <field name="pending_central_check_count"/>
+                <field name="waiting_delivery_count"/>
+                <field name="insufficient_stock_count"/>
+                <field name="internal_line_count"/>
+                <field name="central_flow_status"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click #{record.insufficient_stock_count.raw_value &gt; 0 ? 'border-danger' : (record.pending_central_check_count.raw_value &gt; 0 ? 'border-warning' : 'border-info')}"
+                             style="border-radius: 16px; overflow: hidden;">
+                            <div t-attf-style="height: 4px; background: #{record.insufficient_stock_count.raw_value &gt; 0 ? '#ef4444' : (record.pending_central_check_count.raw_value &gt; 0 ? '#f59e0b' : '#3b82f6')};"/>
+                            <div class="p-3">
+                                <div class="d-flex align-items-start justify-content-between mb-2">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                    <span class="badge rounded-pill text-bg-light">
+                                        <field name="central_flow_status"/>
+                                    </span>
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-building-o mr-1" title="Cửa hàng"/> <field name="store_id"/>
+                                </div>
+                                <div class="mb-2 text-muted">
+                                    <i class="fa fa-calendar mr-1" title="Ngày yêu cầu"/> <field name="date_request" widget="date"/>
+                                </div>
+                                <div class="d-flex flex-wrap" style="gap: 6px;">
+                                    <span class="badge rounded-pill text-bg-light">Cần kiểm: <field name="pending_central_check_count"/></span>
+                                    <span class="badge rounded-pill text-bg-light">Chờ giao: <field name="waiting_delivery_count"/></span>
+                                    <span class="badge rounded-pill text-bg-light">Thiếu hàng: <field name="insufficient_stock_count"/></span>
+                                    <span class="badge rounded-pill text-bg-light">Tổng dòng: <field name="internal_line_count"/></span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
     </record>
 
-    <record id="action_warehouse_delivery_orders" model="ir.actions.act_window">
+    <record id="store_management.action_central_stock_requests" model="ir.actions.act_window">
+        <field name="name">Kho tổng -&gt; Cửa hàng</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_central_check_kanban"/>
+        <field name="search_view_id" ref="store_management.view_mer_purchase_request_search_central_check"/>
+        <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created']), ('line_ids.fulfillment_method', 'in', ['internal', 'supplier_central']), ('line_ids.internal_flow_state', 'in', ['pending_check', 'waiting_stock'])]</field>
+        <field name="context">{'central_check_menu': 1}</field>
+    </record>
+
+    <record id="menu_warehouse_central_check_requests" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_central_stock_requests"/>
+    </record>
+
+    <record id="view_warehouse_delivery_tree" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.delivery.tree</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <list default_order="scheduled_date asc">
+                <field name="name"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id" optional="show"/>
+                <field name="store_source_document_ref" optional="show"/>
+                <field name="scheduled_date"/>
+                <field name="wm_expected_qty"/>
+                <field name="wm_qc_status"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_warehouse_delivery_search" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.delivery.search</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <field name="store_source_document_ref"/>
+                <filter name="waiting" string="Chờ xử lý" domain="[('state', 'in', ['draft', 'waiting', 'confirmed'])]"/>
+                <filter name="ready" string="Sẵn sàng giao" domain="[('state', '=', 'assigned')]"/>
+                <filter name="done" string="Đã giao" domain="[('state', '=', 'done')]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_month" string="Tháng giao" domain="[]" context="{'group_by': 'scheduled_date:month'}"/>
+                </group>
+                <searchpanel>
+                    <field name="store_receiving_store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="state" icon="fa-tasks" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_warehouse_delivery_kanban" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.delivery.kanban</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <kanban class="o_kanban_mobile" sample="1" default_order="scheduled_date asc">
+                <field name="name"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <field name="store_source_document_ref"/>
+                <field name="scheduled_date"/>
+                <field name="wm_expected_qty"/>
+                <field name="state"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click
+                            #{ record.state.raw_value == 'done' ? 'border-success' : '' }
+                            #{ record.state.raw_value == 'assigned' ? 'border-primary' : '' }
+                            #{ record.state.raw_value in ['draft', 'waiting', 'confirmed'] ? 'border-warning' : '' }"
+                             style="border-radius: 16px; overflow: hidden;">
+                            <div t-attf-style="height: 4px; background: #{record.state.raw_value == 'done' ? '#10b981' : record.state.raw_value == 'assigned' ? '#3b82f6' : '#f59e0b'};"/>
+                            <div class="p-3">
+                                <div class="d-flex align-items-start justify-content-between mb-2">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                    <field name="state" widget="badge"
+                                        decoration-secondary="state == 'draft'"
+                                        decoration-warning="state == 'waiting' or state == 'confirmed'"
+                                        decoration-primary="state == 'assigned'"
+                                        decoration-success="state == 'done'"
+                                    />
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-building-o mr-1" title="Cửa hàng"/> <field name="store_receiving_store_id"/>
+                                </div>
+                                <div class="mb-1 text-muted" t-if="record.mer_request_id.value">
+                                    <i class="fa fa-link mr-1" title="PR nguồn"/> <field name="mer_request_id"/>
+                                </div>
+                                <div class="mb-2 text-muted">
+                                    <i class="fa fa-file-text-o mr-1" title="Chứng từ nguồn"/> <field name="store_source_document_ref"/>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <span>SL giao: <field name="wm_expected_qty"/></span>
+                                    <span><field name="scheduled_date" widget="date"/></span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="action_warehouse_pending_deliveries" model="ir.actions.act_window">
         <field name="name">Đơn cần giao</field>
         <field name="res_model">stock.picking</field>
-        <field name="view_mode">list,form</field>
-        <field name="view_id" ref="supply_chain_management.view_picking_tree_store_delivery_supply_chain"/>
-        <field name="search_view_id" ref="supply_chain_management.view_picking_search_store_delivery_supply_chain"/>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_delivery_kanban"/>
+        <field name="search_view_id" ref="store_management.view_warehouse_delivery_search"/>
         <field name="domain">[('picking_type_code', '=', 'internal'), ('location_id.warehouse_id.mis_role', '=', 'central'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', 'not in', ['done', 'cancel'])]</field>
-        <field name="context">{'search_default_waiting_delivery': 1, 'create': False}</field>
+        <field name="context">{'search_default_ready': 1}</field>
     </record>
 
-    <record id="action_warehouse_delivery_history" model="ir.actions.act_window">
-        <field name="name">Đơn đã chuyển</field>
+    <record id="menu_warehouse_pending_deliveries" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_warehouse_pending_deliveries"/>
+    </record>
+
+    <record id="action_warehouse_completed_deliveries" model="ir.actions.act_window">
+        <field name="name">Đơn đã giao</field>
         <field name="res_model">stock.picking</field>
-        <field name="view_mode">list,form</field>
-        <field name="view_id" ref="supply_chain_management.view_picking_tree_store_delivery_supply_chain"/>
-        <field name="search_view_id" ref="supply_chain_management.view_picking_search_store_delivery_supply_chain"/>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_delivery_kanban"/>
+        <field name="search_view_id" ref="store_management.view_warehouse_delivery_search"/>
         <field name="domain">[('picking_type_code', '=', 'internal'), ('location_id.warehouse_id.mis_role', '=', 'central'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', '=', 'done')]</field>
-        <field name="context">{'search_default_done_delivery': 1, 'create': False}</field>
+        <field name="context">{'search_default_done': 1}</field>
     </record>
 
-    <menuitem
-        id="menu_warehouse_delivery_orders"
-        name="Đơn cần giao"
-        parent="warehouse_management.menu_warehouse_root"
-        action="action_warehouse_delivery_orders"
-        sequence="15"
-        groups="warehouse_management.group_receiving_qc_user"
-    />
-
-    <menuitem
-        id="menu_warehouse_delivery_history"
-        name="Đơn đã chuyển"
-        parent="warehouse_management.menu_warehouse_root"
-        action="action_warehouse_delivery_history"
-        sequence="20"
-        groups="warehouse_management.group_receiving_qc_user"
-    />
-
-    <menuitem
-        id="menu_warehouse_stock_management"
-        name="Quản lý kho hàng"
-        parent="warehouse_management.menu_warehouse_root"
-        sequence="40"
-        groups="warehouse_management.group_receiving_qc_user"
-    />
-
-    <record id="stock.menu_stock_warehouse_mgmt" model="ir.ui.menu">
-        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+    <record id="menu_warehouse_completed_deliveries" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_warehouse_completed_deliveries"/>
     </record>
-
-    <record id="stock.menu_stock_inventory_control" model="ir.ui.menu">
-        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
-    </record>
-
-    <record id="stock.menu_warehouse_report" model="ir.ui.menu">
-        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
-    </record>
-
-    <record id="stock.menu_stock_config_settings" model="ir.ui.menu">
-        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
-    </record>
-
-    <record id="supply_chain_management.menu_supply_chain_root" model="ir.ui.menu">
-        <field name="active" eval="False"/>
-    </record>
-
-    <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
-        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
-    </record>
-
-    <record id="stock.menu_stock_warehouse_mgmt" model="ir.ui.menu">
-        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
-    </record>
-
-    <record id="stock.menu_stock_inventory_control" model="ir.ui.menu">
-        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
-    </record>
-
-    <record id="stock.menu_warehouse_report" model="ir.ui.menu">
-        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
-    </record>
-
-    <record id="stock.menu_stock_config_settings" model="ir.ui.menu">
-        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_manager')])]"/>
-    </record>
-
 </odoo>

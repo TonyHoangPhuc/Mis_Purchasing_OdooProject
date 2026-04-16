@@ -52,22 +52,54 @@
         groups="store_management.group_store_user"
     />
 
-    <record id="action_store_receipts" model="ir.actions.act_window">
-        <field name="name">Nhận hàng &amp; QC cửa hàng</field>
+    <record id="action_store_receipts_pending" model="ir.actions.act_window">
+        <field name="name">Đơn NCC chờ nhận &amp; QC</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="search_view_id" ref="warehouse_management.view_receiving_qc_search"/>
+        <field name="domain">[('picking_type_code', '=', 'incoming'), ('picking_type_id.warehouse_id.mis_role', '=', 'store'), ('state', 'not in', ('done', 'cancel'))]</field>
+        <field name="context">{'search_default_incoming_only': 1}</field>
+    </record>
+
+    <record id="action_store_receipts_history" model="ir.actions.act_window">
+        <field name="name">Lịch sử giao nhận</field>
         <field name="res_model">stock.picking</field>
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="warehouse_management.view_receiving_qc_tree"/>
         <field name="search_view_id" ref="warehouse_management.view_receiving_qc_search"/>
-        <field name="domain">['|', '&amp;', ('picking_type_code', '=', 'incoming'), ('picking_type_id.warehouse_id.mis_role', '=', 'store'), '&amp;', ('picking_type_code', '=', 'internal'), ('location_dest_id.warehouse_id.mis_role', '=', 'store')]</field>
-        <field name="context">{'search_default_group_receiving_store': 1}</field>
+        <field name="domain">['&amp;', '|', '&amp;', ('picking_type_code', '=', 'incoming'), ('picking_type_id.warehouse_id.mis_role', '=', 'store'), '&amp;', ('picking_type_code', '=', 'internal'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', 'in', ('done', 'cancel'))]</field>
+        <field name="context">{'search_default_group_month': 1}</field>
     </record>
 
     <menuitem
-        id="menu_store_receipts"
-        name="Nhận hàng &amp; QC"
+        id="menu_store_receipts_pending"
+        name="Đơn NCC chờ nhận &amp; QC"
         parent="store_management.menu_store_inventory_root"
-        action="store_management.action_store_receipts"
+        action="store_management.action_store_receipts_pending"
         sequence="20"
         groups="store_management.group_store_user"
     />
+
+    <menuitem
+        id="menu_store_receipts_history"
+        name="Lịch sử giao nhận"
+        parent="store_management.menu_store_inventory_root"
+        action="store_management.action_store_receipts_history"
+        sequence="25"
+        groups="store_management.group_store_user"
+    />
+
+    <record id="action_store_receipts_pending_kanban" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">kanban</field>
+        <field name="view_id" ref="store_management.view_warehouse_receiving_qc_kanban"/>
+        <field name="act_window_id" ref="store_management.action_store_receipts_pending"/>
+    </record>
+
+    <record id="action_store_receipts_pending_tree" model="ir.actions.act_window.view">
+        <field name="sequence" eval="2"/>
+        <field name="view_mode">list</field>
+        <field name="view_id" ref="warehouse_management.view_receiving_qc_tree"/>
+        <field name="act_window_id" ref="store_management.action_store_receipts_pending"/>
+    </record>
 </odoo>

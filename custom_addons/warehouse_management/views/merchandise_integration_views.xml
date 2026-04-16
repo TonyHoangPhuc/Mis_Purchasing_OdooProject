@@ -144,4 +144,63 @@
             </xpath>
         </field>
     </record>
+
+    <record id="view_mer_po_management_list_inherit_wm_receipt_status" model="ir.ui.view">
+        <field name="name">mer.po.management.list.inherit.wm.receipt.status</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_po_management_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='state']" position="after">
+                <field
+                    name="wm_store_receipt_status"
+                    string="Trạng thái nhận hàng"
+                    widget="badge"
+                    optional="show"
+                    decoration-success="wm_store_receipt_status == 'received'"
+                    decoration-warning="wm_store_receipt_status == 'pending_qc'"
+                    decoration-danger="wm_store_receipt_status == 'defective'"
+                    decoration-muted="wm_store_receipt_status == 'no_receipt'"
+                />
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_po_management_search_inherit_wm_receipt_status" model="ir.ui.view">
+        <field name="name">mer.po.management.search.inherit.wm.receipt.status</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_po_management_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='confirmed']" position="after">
+                <filter name="pending_qc" string="Chờ nhận hàng" domain="[('wm_store_receipt_status','=','pending_qc')]"/>
+                <filter name="received" string="Đã nhận hàng" domain="[('wm_store_receipt_status','=','received')]"/>
+                <filter name="defective" string="Hàng lỗi" domain="[('wm_store_receipt_status','=','defective')]"/>
+            </xpath>
+            <xpath expr="//filter[@name='group_month']" position="before">
+                <filter name="group_status" string="Trạng thái nhận" domain="[]" context="{'group_by': 'wm_store_receipt_status'}"/>
+            </xpath>
+        </field>
+    </record>
+    <record id="view_mer_po_management_list_inherit_wm_row_style" model="ir.ui.view">
+        <field name="name">mer.po.management.list.inherit.wm.row.style</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_po_management_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//list" position="attributes">
+                <attribute name="decoration-success">wm_store_receipt_status == 'received'</attribute>
+                <attribute name="decoration-warning">wm_store_receipt_status == 'pending_qc'</attribute>
+                <attribute name="decoration-danger">wm_store_receipt_status == 'defective'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='state']" position="replace">
+                <field
+                    name="wm_store_receipt_status"
+                    string="Trạng thái"
+                    widget="badge"
+                    decoration-success="wm_store_receipt_status == 'received'"
+                    decoration-warning="wm_store_receipt_status == 'pending_qc'"
+                    decoration-danger="wm_store_receipt_status == 'defective'"
+                    decoration-muted="wm_store_receipt_status == 'no_receipt'"
+                />
+            </xpath>
+        </field>
+    </record>
 </odoo>

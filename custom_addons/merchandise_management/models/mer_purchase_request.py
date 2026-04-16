@@ -1,5 +1,17 @@
-from odoo import models, fields, api, _
+import operator as py_operator
+
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+
+
+COUNT_COMPARISON_OPERATORS = {
+    "=": py_operator.eq,
+    "!=": py_operator.ne,
+    ">": py_operator.gt,
+    ">=": py_operator.ge,
+    "<": py_operator.lt,
+    "<=": py_operator.le,
+}
 
 class MerPurchaseRequestLine(models.Model):
     _name = 'mer.purchase.request.line'
@@ -38,7 +50,61 @@ class MerPurchaseRequest(models.Model):
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')
     
-    purchase_id = fields.Many2one('purchase.order', string='Đơn mua hàng (PO)', readonly=True)
+    purchase_order_count = fields.Integer(
+        string='Số PO',
+        compute='_compute_purchase_order_count',
+        search='_search_purchase_order_count',
+    )
+
+    @api.model
+    def _get_purchase_order_count_map(self):
+        grouped_data = self.env['purchase.order'].sudo().read_group(
+            [('origin', '!=', False)],
+            ['origin'],
+            ['origin'],
+            lazy=False,
+        )
+        return {
+            data['origin']: data.get('origin_count', data.get('__count', 0))
+            for data in grouped_data
+            if data.get('origin')
+        }
+
+    def _compute_purchase_order_count(self):
+        count_map = self._get_purchase_order_count_map()
+        for req in self:
+            req.purchase_order_count = count_map.get(req.name, 0)
+
+    @api.model
+    def _search_purchase_order_count(self, operator, value):
+        comparator = COUNT_COMPARISON_OPERATORS.get(operator)
+        if comparator is None:
+            raise UserError(_("Toán tử %s không được hỗ trợ cho bộ lọc số PO.") % operator)
+
+        try:
+            target_value = int(value)
+        except (TypeError, ValueError) as exc:
+            raise UserError(_("Giá trị lọc số PO không hợp lệ: %s") % value) from exc
+
+        count_map = self._get_purchase_order_count_map()
+        matching_ids = [
+            request.id
+            for request in self.search([])
+            if comparator(count_map.get(request.name, 0), target_value)
+        ]
+        return [('id', 'in', matching_ids)]
+
+    def action_view_purchase_orders(self):
+        self.ensure_one()
+        po_ids = self.env['purchase.order'].sudo().search([('origin', '=', self.name)]).ids
+        return {
+            'name': _('Các Đơn mua hàng (PO)'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'purchase.order',
+            'views': [[False, 'list'], [False, 'form']],
+            'domain': [('id', 'in', po_ids)],
+            'target': 'current',
+        }
     notes = fields.Text(string='Ghi chú')
 
     # Sinh mã PR theo sequence khi tạo mới
@@ -138,7 +204,7 @@ class MerPurchaseRequest(models.Model):
         # Tự động xác nhận đơn hàng (Confirm Order)
         purchase_id.button_confirm()
         
-        self.write({'purchase_id': purchase_id.id, 'state': 'po_created'})
+        self.write({'state': 'po_created'})
 
         # Gửi thông báo Chatter cho bộ phận Kho
         if self.partner_id:
@@ -172,10 +238,4 @@ class MerPurchaseRequest(models.Model):
                 subtype_xmlid='mail.mt_comment',
                 partner_ids=[self.partner_id.id]
             )
-        return {
-            'type': 'ir.actions.act_window',
-            'res_model': 'purchase.order',
-            'res_id': purchase_id.id,
-            'view_mode': 'form',
-            'target': 'current',
-        }
+        return self.action_view_purchase_orders()

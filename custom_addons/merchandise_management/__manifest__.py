@@ -11,7 +11,7 @@
         - Gửi PO cho Kho
         - Xử lý sai lệch hàng hóa
     """,
-    'category': 'Merchandise Management', # Phân loại app trên dashboard
+    'category': 'Custom_Odoo', # Phân loại app trên dashboard
     'author': 'Your Name',
     # Các module Odoo tiêu chuẩn cần cài đặt trước
     'depends': ['purchase', 'stock', 'product', 'uom', 'mail', 'purchase_stock'],
@@ -22,11 +22,18 @@
         'data/ir_sequence_data.xml',
         'data/ir_cron_data.xml',
         'views/product_template_views.xml',
+        'views/merchandise_dashboard_views.xml',
         'views/mer_purchase_request_views.xml',
         'views/mer_promotion_views.xml',
         'views/mer_discrepancy_report_views.xml',
         'views/merchandise_menus.xml',
     ],
+    'assets': {
+        'web.assets_backend': [
+            'merchandise_management/static/src/js/merchandise_dashboard.js',
+            'merchandise_management/static/src/xml/merchandise_dashboard.xml',
+        ],
+    },
     'installable': True,
     'application': True, 
 }
