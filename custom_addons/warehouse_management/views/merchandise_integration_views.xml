@@ -129,6 +129,9 @@
                     decoration-muted="wm_store_receipt_status == 'no_receipt'"
                 />
             </xpath>
+            <xpath expr="//header" position="inside">
+                <button name="action_wm_lock_order" type="object" string="Hoàn tất" class="btn-success" invisible="state != 'purchase'" groups="merchandise_management.group_merchandise_manager"/>
+            </xpath>
         </field>
     </record>
 

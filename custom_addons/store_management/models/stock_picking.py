@@ -230,6 +230,65 @@ class StockPicking(models.Model):
         self._sync_related_mer_request_state()
         return result
 
+    def action_confirm(self):
+        # Tự động tách luồng 1 bước thành 2 bước (Transit) khi user tạo điều chuyển trực tiếp từ Kho tổng sang Cửa hàng
+        transit_location = self.env.company.internal_transit_location_id or self.env.ref('stock.stock_location_inter_company', raise_if_not_found=False)
+        central_to_store_pickings = self.filtered(
+            lambda p: p.picking_type_code in ("internal", "outgoing")
+            and p.location_id.warehouse_id
+            and p.location_id.warehouse_id.mis_role == "central"
+            and p.location_dest_id.warehouse_id
+            and p.location_dest_id.warehouse_id.mis_role == "store"
+            and not p._context.get("skip_transit_interception")
+        )
+
+        store_receipts = {}
+        for picking in central_to_store_pickings:
+            if not transit_location:
+                continue
+            store_warehouse = picking.location_dest_id.warehouse_id
+            
+            # 1. Đổi đích của phiếu hiện tại thành Transit
+            picking.location_dest_id = transit_location.id
+            for move in picking.move_ids:
+                move.location_dest_id = transit_location.id
+
+            # 2. Tạo phiếu nhận hàng tương ứng cho Cửa hàng
+            store_picking = self.env["stock.picking"].with_context(skip_transit_interception=True).sudo().create({
+                "partner_id": picking.location_id.warehouse_id.partner_id.id if picking.location_id.warehouse_id.partner_id else False,
+                "picking_type_id": store_warehouse.in_type_id.id,
+                "location_id": transit_location.id,
+                "location_dest_id": store_warehouse.lot_stock_id.id,
+                "origin": (picking.origin or picking.name) + _(" - Giao hàng"),
+                "scheduled_date": picking.scheduled_date,
+                "move_ids": [
+                    (0, 0, {
+                        "name": move.product_id.display_name,
+                        "description_picking": move.product_id.display_name,
+                        "product_id": move.product_id.id,
+                        "product_uom_qty": move.product_uom_qty,
+                        "product_uom": move.product_uom.id,
+                        "location_id": transit_location.id,
+                        "location_dest_id": store_warehouse.lot_stock_id.id,
+                    })
+                    for move in picking.move_ids if move.product_uom_qty > 0
+                ],
+            })
+            store_receipts[picking.id] = store_picking
+
+        result = super().action_confirm()
+
+        # 3. Liên kết move để phiếu nhận hàng chỉ Sẵn sàng khi phiếu giao hoàn tất
+        for picking_id, store_picking in store_receipts.items():
+            central_picking = self.browse(picking_id)
+            for store_move in store_picking.move_ids:
+                central_move = central_picking.move_ids.filtered(lambda m: m.product_id == store_move.product_id)
+                if central_move:
+                    store_move.move_orig_ids = [(6, 0, central_move.ids)]
+            store_picking.action_confirm()
+
+        return result
+
     def button_validate(self):
         pickings_requiring_qc = self.filtered(
             lambda picking: picking._is_store_receipt_for_qc() and picking.state not in ("done", "cancel")

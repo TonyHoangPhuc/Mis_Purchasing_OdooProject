@@ -4,18 +4,17 @@
         <field name="name">store.product.line.tree</field>
         <field name="model">store.product.line</field>
         <field name="arch" type="xml">
-            <list default_order="store_id, product_id" editable="bottom">
-                <field name="store_id" readonly="1" optional="show"/>
+            <list default_order="store_id, product_id" editable="bottom" sample="1">
+                <field name="store_id" readonly="1" optional="show" decoration-bf="1"/>
                 <field name="warehouse_id" readonly="1" optional="hide"/>
-                <field name="product_id" readonly="1"/>
+                <field name="product_id" readonly="1" decoration-bf="1"/>
                 <field name="categ_id" readonly="1" optional="hide"/>
                 <field name="min_qty"/>
                 <field name="max_qty"/>
                 <field name="current_qty" readonly="1" widget="progressbar" options="{'current_value': 'current_qty', 'max_value': 'max_qty'}"/>
                 <field name="available_qty" readonly="1" optional="show"/>
                 <field name="pending_replenishment_qty" readonly="1" optional="show"/>
-                <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty &gt; 0" decoration-success="suggested_replenishment_qty == 0"/>
-                <field name="active" optional="hide"/>
+                <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
                 <button
                     name="action_create_replenishment_pr"
                     type="object"

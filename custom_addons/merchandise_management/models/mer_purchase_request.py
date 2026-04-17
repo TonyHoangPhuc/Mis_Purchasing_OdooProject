@@ -37,6 +37,7 @@ class MerPurchaseRequest(models.Model):
         ('to_approve', 'Chờ Quản lý duyệt'),
         ('approved', 'Được phê duyệt'),
         ('po_created', 'Đã tạo PO'),
+        ('done', 'Hoàn tất'),
         ('rejected', 'Từ chối'),
         ('cancel', 'Hủy')
     ], string='Trạng thái', default='draft', tracking=True)
@@ -172,6 +173,10 @@ class MerPurchaseRequest(models.Model):
     def action_cancel(self):
         self.write({'state': 'cancel'})
 
+    # Hoàn tất yêu cầu
+    def action_done(self):
+        self.write({'state': 'done'})
+
     # Tạo PO từ yêu cầu đã duyệt
     def action_create_po(self):
         if self.state != 'approved':
@@ -204,7 +209,7 @@ class MerPurchaseRequest(models.Model):
         # Tự động xác nhận đơn hàng (Confirm Order)
         purchase_id.button_confirm()
         
-        self.write({'state': 'po_created'})
+        self.write({'state': 'done'})
 
         # Gửi thông báo Chatter cho bộ phận Kho
         if self.partner_id:

@@ -31,8 +31,7 @@
                                     <field name="state" widget="badge"
                                         decoration-secondary="state == 'draft'"
                                         decoration-warning="state == 'submitted' or state == 'to_approve'"
-                                        decoration-info="state == 'approved'"
-                                        decoration-primary="state == 'po_created'"
+                                        decoration-info="state == 'approved' or state == 'po_created'"
                                         decoration-success="state == 'done'"
                                         decoration-danger="state == 'rejected'"
                                     />
@@ -129,7 +128,7 @@
         <field name="name">mer.po.management.list</field>
         <field name="model">purchase.order</field>
         <field name="arch" type="xml">
-            <list string="Quản lý đơn mua hàng (PO)" default_order="date_order desc">
+            <list string="Quản lý đơn mua hàng (PO)" default_order="date_order desc" sample="1">
                 <field name="name" string="PO#"/>
                 <field name="origin" string="PR gốc"/>
                 <field name="partner_id" string="Nhà CC"/>

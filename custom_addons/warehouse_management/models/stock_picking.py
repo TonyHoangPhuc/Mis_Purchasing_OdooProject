@@ -162,7 +162,15 @@ class StockPicking(models.Model):
             if picking.state not in ("done", "cancel"):
                 pickings_to_validate |= picking
         if pickings_to_validate:
-            return pickings_to_validate.button_validate()
+            res = pickings_to_validate.button_validate()
+            # Tự động Hoàn tất PO nếu đã nhận đủ hàng
+            for picking in pickings_to_validate:
+                if picking.purchase_id and picking.state == 'done':
+                    # Kiểm tra xem tất cả phiếu nhập của PO này đã xong chưa
+                    incoming_pickings = picking.purchase_id.picking_ids.filtered(lambda p: p.picking_type_code == 'incoming')
+                    if all(p.state in ['done', 'cancel'] for p in incoming_pickings):
+                        picking.purchase_id.action_wm_lock_order()
+            return res
 
     def action_qc_reject(self):
         self._check_wm_incoming_receipt()

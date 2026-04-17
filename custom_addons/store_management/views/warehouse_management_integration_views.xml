@@ -72,6 +72,29 @@
         <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_manager')])]"/>
     </record>
 
+    <record id="view_picking_form_inherit_discrepancy" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.discrepancy</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="%(store_management.action_mer_delivery_discrepancy_wizard)d" 
+                        string="Kiểm hàng thực tế (Báo dư)" 
+                        type="action" 
+                        invisible="state not in ('assigned', 'confirmed') or picking_type_code not in ('internal', 'incoming')"
+                        groups="store_management.group_store_user"
+                        context="{'default_picking_id': id}"/>
+                
+                <button name="%(store_management.action_mer_excess_receipt)d" 
+                        string="Xem báo cáo dư hàng" 
+                        type="action" 
+                        invisible="state != 'done' or picking_type_code not in ('internal', 'incoming')"
+                        groups="store_management.group_store_user"
+                        context="{'default_picking_id': id, 'search_default_picking_id': id}"/>
+            </xpath>
+        </field>
+    </record>
+
     <record id="view_receiving_qc_tree_inherit_store_context" model="ir.ui.view">
         <field name="name">stock.picking.receiving.qc.tree.inherit.store.context</field>
         <field name="model">stock.picking</field>

@@ -150,7 +150,7 @@
         <field name="name">mer.purchase.request.tree.central.check</field>
         <field name="model">mer.purchase.request</field>
         <field name="arch" type="xml">
-            <list default_order="date_request desc">
+            <list default_order="date_request desc" sample="1">
                 <field name="name"/>
                 <field name="store_id"/>
                 <field name="warehouse_id"/>
@@ -306,7 +306,7 @@
         <field name="name">mer.purchase.request.tree.order.management</field>
         <field name="model">mer.purchase.request</field>
         <field name="arch" type="xml">
-            <list default_order="date_request desc">
+            <list default_order="date_request desc" sample="1">
                 <field name="name" string="PR"/>
                 <field name="store_id"/>
                 <field name="warehouse_id"/>

@@ -270,6 +270,23 @@ class StoreStore(models.Model):
             limit=1,
         )
 
+    def action_relink_warehouse(self):
+        """Khắc phục các cửa hàng bị liên kết nhầm với kho tổng hoặc kho không đúng mã."""
+        for store in self:
+            code = store.code or store._normalize_store_code(store.name)
+            warehouse = self.env["stock.warehouse"].search([("code", "=", code)], limit=1)
+            if warehouse and warehouse != store.warehouse_id:
+                store.write({"warehouse_id": warehouse.id})
+                warehouse.write({"store_record_id": store.id, "mis_role": "store"})
+            elif not warehouse:
+                # Nếu không tìm thấy kho theo mã, tạo mới kho chuẩn cho cửa hàng
+                warehouse = self.env["stock.warehouse"].create(
+                    self._prepare_warehouse_vals({"name": store.name, "code": code}, store.company_id.id, store.partner_id.id)
+                )
+                store.write({"warehouse_id": warehouse.id})
+                warehouse.write({"store_record_id": store.id})
+        return True
+
     def _get_replenishment_lines(self):
         self.ensure_one()
         return self.product_line_ids.filtered(lambda line: line.suggested_replenishment_qty > 0 and line.active)
@@ -394,7 +411,7 @@ class StoreProductLine(models.Model):
     location_id = fields.Many2one(
         "stock.location",
         string="Vị trí tồn",
-        related="warehouse_id.lot_stock_id",
+        related="store_id.warehouse_id.lot_stock_id",
         store=True,
         readonly=True,
     )
@@ -484,20 +501,28 @@ class StoreProductLine(models.Model):
             current_qty = 0.0
             available_qty = 0.0
             pending_qty = 0.0
-            if line.product_id and line.location_id:
-                quants = Quant.search(
-                    [
-                        ("product_id", "=", line.product_id.id),
-                        ("location_id", "child_of", line.location_id.id),
-                    ]
-                )
-                current_qty = sum(quants.mapped("quantity"))
-                available_qty = sum(quants.mapped("available_quantity"))
+            # Safety check for location
+            target_location_id = line.location_id.id if line.location_id else None
+            
+            if line.product_id and target_location_id:
+                # Use SQL for absolute isolation at the specific lot location
+                self.env.cr.execute("""
+                    SELECT SUM(quantity), SUM(quantity - reserved_quantity) 
+                    FROM stock_quant 
+                    WHERE product_id = %s AND location_id = %s
+                """, (line.product_id.id, target_location_id))
+                res = self.env.cr.fetchone()
+                if res:
+                    current_qty = res[0] if res[0] else 0.0
+                    available_qty = res[1] if res[1] else 0.0
+                
                 pending_qty = pending_qty_map.get((line.store_id.id, line.product_id.id), 0.0)
+            
             suggested_qty = 0.0
             effective_qty = available_qty + pending_qty
             if effective_qty < line.min_qty:
                 suggested_qty = max(line.max_qty - effective_qty, 0.0)
+            
             line.current_qty = current_qty
             line.available_qty = available_qty
             line.pending_replenishment_qty = pending_qty

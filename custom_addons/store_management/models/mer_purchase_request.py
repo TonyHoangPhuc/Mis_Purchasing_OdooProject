@@ -372,42 +372,82 @@ class MerPurchaseRequest(models.Model):
             grouped_lines[source_warehouse.id] |= line
 
         created_pickings = self.env["stock.picking"]
+        transit_location = self.company_id.internal_transit_location_id or self.env.ref('stock.stock_location_inter_company', raise_if_not_found=False)
+
         for source_warehouse_id, grouped_request_lines in grouped_lines.items():
             source_warehouse = self.env["stock.warehouse"].browse(source_warehouse_id)
-            picking = self.env["stock.picking"].sudo().create(
+            dest_location = transit_location if transit_location else self.warehouse_id.lot_stock_id
+
+            # 1. Create Central Delivery Picking (WH -> Transit)
+            central_picking = self.env["stock.picking"].sudo().create(
                 {
                     "partner_id": self.store_id.partner_id.id if self.store_id and self.store_id.partner_id else False,
-                    "picking_type_id": source_warehouse.int_type_id.id,
+                    "picking_type_id": source_warehouse.out_type_id.id or source_warehouse.int_type_id.id,
                     "location_id": source_warehouse.lot_stock_id.id,
-                    "location_dest_id": self.warehouse_id.lot_stock_id.id,
-                    "origin": self.name,
+                    "location_dest_id": dest_location.id,
+                    "origin": self.name + _(" - Giao hàng"),
                     "scheduled_date": fields.Datetime.now(),
                     "move_ids": [
                         (
                             0,
                             0,
                             {
+                                "name": line.product_id.display_name,
                                 "description_picking": line.product_id.display_name,
                                 "product_id": line.product_id.id,
                                 "product_uom_qty": line.approved_qty,
                                 "product_uom": line.product_uom_id.id,
                                 "location_id": source_warehouse.lot_stock_id.id,
-                                "location_dest_id": self.warehouse_id.lot_stock_id.id,
+                                "location_dest_id": dest_location.id,
                             },
                         )
                         for line in grouped_request_lines
                     ],
                 }
             )
-            picking.action_confirm()
-            picking.action_assign()
+            central_picking.action_confirm()
+            central_picking.action_assign()
+            
+            store_picking = central_picking
+            # 2. Create Store Receipt Picking (Transit -> Store) if transit exists
+            if transit_location:
+                store_picking = self.env["stock.picking"].sudo().create(
+                    {
+                        "partner_id": source_warehouse.partner_id.id if source_warehouse.partner_id else False,
+                        "picking_type_id": self.warehouse_id.in_type_id.id,
+                        "location_id": dest_location.id,
+                        "location_dest_id": self.warehouse_id.lot_stock_id.id,
+                        "origin": self.name + _(" - Nhận hàng"),
+                        "scheduled_date": fields.Datetime.now(),
+                        "move_ids": [
+                            (
+                                0,
+                                0,
+                                {
+                                    "name": line.product_id.display_name,
+                                    "description_picking": line.product_id.display_name,
+                                    "product_id": line.product_id.id,
+                                    "product_uom_qty": line.approved_qty,
+                                    "product_uom": line.product_uom_id.id,
+                                    "location_id": dest_location.id,
+                                    "location_dest_id": self.warehouse_id.lot_stock_id.id,
+                                    "move_orig_ids": [(6, 0, [central_move.id])],
+                                },
+                            )
+                            for line, central_move in zip(grouped_request_lines, central_picking.move_ids)
+                        ],
+                    }
+                )
+                store_picking.action_confirm()
+            
+            # The PR tracks the final destination picking (Store's receipt) so status updates when store receives
             grouped_request_lines.with_context(store_skip_sync_rule=True).write(
                 {
-                    "internal_picking_id": picking.id,
+                    "internal_picking_id": store_picking.id,
                     "internal_flow_state": "waiting_delivery",
                 }
             )
-            created_pickings |= picking
+            created_pickings |= central_picking | store_picking
 
         if created_pickings:
             self.state = "po_created"

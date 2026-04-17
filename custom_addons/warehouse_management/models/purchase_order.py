@@ -64,3 +64,13 @@ class PurchaseOrder(models.Model):
                 order.wm_store_receipt_status = "pending_qc"
             else:
                 order.wm_store_receipt_status = "no_receipt"
+
+    def action_wm_lock_order(self):
+        """Hàm hỗ trợ khóa PO một cách an toàn"""
+        for order in self:
+            # Chỉ cố gắng gọi button_done nếu nó tồn tại (Tính năng Lock PO được bật)
+            if hasattr(order, 'button_done'):
+                try:
+                    order.button_done()
+                except Exception:
+                    pass

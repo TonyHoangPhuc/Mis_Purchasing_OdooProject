@@ -4,15 +4,15 @@
         <field name="name">store.store.tree</field>
         <field name="model">store.store</field>
         <field name="arch" type="xml">
-            <list default_order="name asc">
-                <field name="name"/>
+            <list default_order="name asc" sample="1">
+                <field name="name" decoration-bf="1"/>
                 <field name="code"/>
-                <field name="responsible_user_id"/>
-                <field name="store_priority"/>
+                <field name="responsible_user_id" widget="many2one_avatar_user"/>
+                <field name="store_priority" widget="badge" decoration-danger="store_priority == 'high'" decoration-warning="store_priority == 'medium'" decoration-info="store_priority == 'low'"/>
                 <field name="warehouse_id"/>
                 <field name="product_count"/>
-                <field name="replenishment_count"/>
-                <field name="active"/>
+                <field name="replenishment_count" decoration-danger="replenishment_count > 0" decoration-bf="replenishment_count > 0"/>
+                <field name="active" optional="hide"/>
             </list>
         </field>
     </record>
@@ -148,13 +148,13 @@
                         <page string="Danh mục sản phẩm">
                             <field name="product_line_ids" nolabel="1" context="{'default_store_id': id}">
                                 <list editable="bottom">
-                                    <field name="product_id"/>
+                                    <field name="product_id" decoration-bf="1"/>
                                     <field name="min_qty"/>
                                     <field name="max_qty"/>
                                     <field name="current_qty" readonly="1"/>
                                     <field name="available_qty" readonly="1"/>
                                     <field name="pending_replenishment_qty" readonly="1"/>
-                                    <field name="suggested_replenishment_qty" readonly="1"/>
+                                    <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
                                     <button
                                         name="action_create_replenishment_pr"
                                         type="object"

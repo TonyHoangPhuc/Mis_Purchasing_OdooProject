@@ -17,4 +17,13 @@
         <field name="padding">5</field>
         <field name="company_id" eval="False"/>
     </record>
+
+    <!-- Sequence: Dãy số tự động cho Khuyến mãi (PROM) -->
+    <record id="seq_mer_promotion" model="ir.sequence">
+        <field name="name">Khuyến mãi Merchandise</field>
+        <field name="code">mer.promotion</field>
+        <field name="prefix">PROM/%(year)s/</field>
+        <field name="padding">5</field>
+        <field name="company_id" eval="False"/>
+    </record>
 </odoo>

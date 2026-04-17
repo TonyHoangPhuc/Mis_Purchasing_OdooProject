@@ -85,16 +85,16 @@
         <field name="name">stock.picking.receiving.qc.tree</field>
         <field name="model">stock.picking</field>
         <field name="arch" type="xml">
-            <list default_order="scheduled_date desc">
-                <field name="name"/>
+            <list default_order="scheduled_date desc" sample="1">
+                <field name="name" decoration-bf="1"/>
                 <field name="partner_id"/>
                 <field name="scheduled_date"/>
-                <field name="state"/>
-                <field name="wm_qc_status"/>
-                <field name="wm_expected_qty"/>
-                <field name="wm_received_qty"/>
-                <field name="wm_damaged_qty"/>
-                <field name="wm_discrepancy_qty"/>
+                <field name="state" widget="badge" decoration-info="state == 'assigned'" decoration-success="state == 'done'" decoration-warning="state in ['confirmed', 'waiting']"/>
+                <field name="wm_qc_status" widget="badge" decoration-success="wm_qc_status == 'passed'" decoration-danger="wm_qc_status == 'rejected'" decoration-warning="wm_qc_status == 'checking'"/>
+                <field name="wm_expected_qty" sum="Tổng dự kiến"/>
+                <field name="wm_received_qty" sum="Tổng nhận"/>
+                <field name="wm_damaged_qty" sum="Tổng lỗi"/>
+                <field name="wm_discrepancy_qty" sum="Tổng lệch"/>
             </list>
         </field>
     </record>
