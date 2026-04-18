@@ -60,13 +60,13 @@
     <menuitem id="menu_merchandise_discrepancy_lack"
               name="Báo cáo thiếu hàng"
               parent="menu_merchandise_discrepancy"
-              action="action_mer_discrepancy_report"
+              action="action_mer_discrepancy_report_shortage"
               sequence="1"/>
 
     <menuitem id="menu_merchandise_discrepancy_excess"
               name="Báo cáo nhận dư hàng"
               parent="menu_merchandise_discrepancy"
-              action="store_management.action_mer_excess_receipt"
+              action="action_mer_discrepancy_report_overage"
               sequence="2"/>
 
     <menuitem id="menu_merchandise_products"

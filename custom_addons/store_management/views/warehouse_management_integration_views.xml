@@ -82,7 +82,7 @@
                         string="Kiểm hàng thực tế (Báo dư)" 
                         type="action" 
                         invisible="state not in ('assigned', 'confirmed') or picking_type_code not in ('internal', 'incoming')"
-                        groups="store_management.group_store_user"
+                        groups="store_management.group_store_user,warehouse_management.group_receiving_qc_user"
                         context="{'default_picking_id': id}"/>
                 
                 <button name="%(store_management.action_mer_excess_receipt)d" 
@@ -91,6 +91,27 @@
                         invisible="state != 'done' or picking_type_code not in ('internal', 'incoming')"
                         groups="store_management.group_store_user"
                         context="{'default_picking_id': id, 'search_default_picking_id': id}"/>
+                <button name="action_start_store_delivery"
+                        string="Ti&#7871;n h&#224;nh giao h&#224;ng &#273;&#7871;n c&#7917;a h&#224;ng"
+                        type="object"
+                        class="btn-primary"
+                        invisible="store_route_type != 'central_to_store' or state in ('done', 'cancel')"
+                        groups="warehouse_management.group_receiving_qc_user"/>
+                <button name="action_complete_central_receipt_check"
+                        string="Chốt kiểm hàng"
+                        type="object"
+                        class="btn-success"
+                        invisible="store_route_type != 'supplier_to_central' or not store_actual_check_done or state in ('done', 'cancel') or wm_qc_status == 'passed' or wm_qc_status == 'rejected'"
+                        groups="warehouse_management.group_receiving_qc_user"/>
+            </xpath>
+            <xpath expr="//button[@name='button_validate'][1]" position="attributes">
+                <attribute name="invisible">store_route_type == 'central_to_store' or state in ('draft', 'confirmed', 'done', 'cancel') or (wm_is_incoming_receipt and wm_qc_status != 'passed')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='button_validate'][2]" position="attributes">
+                <attribute name="invisible">store_route_type == 'central_to_store' or state in ('waiting', 'assigned', 'done', 'cancel') or (wm_is_incoming_receipt and wm_qc_status != 'passed')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_confirm']" position="attributes">
+                <attribute name="invisible">store_route_type == 'central_to_store' or state != 'draft'</attribute>
             </xpath>
         </field>
     </record>
@@ -196,6 +217,13 @@
                 </templates>
             </kanban>
         </field>
+    </record>
+
+    <record id="action_store_receipts_pending_kanban" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">kanban</field>
+        <field name="view_id" ref="store_management.view_warehouse_receiving_qc_kanban"/>
+        <field name="act_window_id" ref="store_management.action_store_receipts_pending"/>
     </record>
 
     <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
@@ -372,8 +400,8 @@
         <field name="view_mode">kanban,list,form</field>
         <field name="view_id" ref="store_management.view_warehouse_delivery_kanban"/>
         <field name="search_view_id" ref="store_management.view_warehouse_delivery_search"/>
-        <field name="domain">[('picking_type_code', '=', 'internal'), ('location_id.warehouse_id.mis_role', '=', 'central'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', 'not in', ['done', 'cancel'])]</field>
-        <field name="context">{'search_default_ready': 1}</field>
+        <field name="domain">[('store_show_in_pending_delivery', '=', True)]</field>
+        <field name="context">{}</field>
     </record>
 
     <record id="menu_warehouse_pending_deliveries" model="ir.ui.menu">
@@ -386,11 +414,135 @@
         <field name="view_mode">kanban,list,form</field>
         <field name="view_id" ref="store_management.view_warehouse_delivery_kanban"/>
         <field name="search_view_id" ref="store_management.view_warehouse_delivery_search"/>
-        <field name="domain">[('picking_type_code', '=', 'internal'), ('location_id.warehouse_id.mis_role', '=', 'central'), ('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', '=', 'done')]</field>
+        <field name="domain">[('store_show_in_completed_delivery', '=', True)]</field>
         <field name="context">{'search_default_done': 1}</field>
     </record>
 
     <record id="menu_warehouse_completed_deliveries" model="ir.ui.menu">
         <field name="action" ref="store_management.action_warehouse_completed_deliveries"/>
     </record>
+    <record id="view_picking_form_inherit_store_discrepancy_actions" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.store.discrepancy.actions</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="store_management.view_picking_form_inherit_discrepancy"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='%(store_management.action_mer_delivery_discrepancy_wizard)d']" position="attributes">
+                <attribute name="string">Kiểm hàng thực tế</attribute>
+                <attribute name="invisible">state in ('done', 'cancel') or picking_type_code not in ('internal', 'incoming')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='%(store_management.action_mer_excess_receipt)d']" position="replace">
+                <button name="action_view_store_discrepancy_reports"
+                        string="Xem báo cáo sai lệch"
+                        type="object"
+                        invisible="picking_type_code not in ('internal', 'incoming')"
+                        groups="store_management.group_store_user"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_picking_form_inherit_store_receipt_flow" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.store.receipt.flow</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_picking_form_inherit_warehouse_management"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='do_print_picking']" position="attributes">
+                <attribute name="invisible">wm_is_incoming_receipt or state != 'assigned'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='%(stock.action_report_delivery)d']" position="attributes">
+                <attribute name="invisible">wm_is_incoming_receipt or state != 'done'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_cancel']" position="attributes">
+                <attribute name="invisible">wm_is_incoming_receipt or state not in ('assigned', 'confirmed', 'draft', 'waiting')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_start_qc']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or (store_route_type == 'supplier_to_store' and not store_receipt_can_start_qc) or wm_qc_status != 'draft' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_qc_pass']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or wm_qc_status != 'checking' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_qc_reject']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or wm_qc_status != 'checking' or state == 'cancel'</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_picking_form_inherit_store_receipt_only_actual_button" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.store.receipt.only.actual.button</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="store_management.view_picking_form_inherit_store_discrepancy_actions"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='action_view_store_discrepancy_reports']" position="attributes">
+                <attribute name="invisible">True</attribute>
+            </xpath>
+            <xpath expr="//button[@name='%(store_management.action_mer_delivery_discrepancy_wizard)d']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or state in ('done', 'cancel')</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_discrepancy_report_form_inherit_store" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.form.inherit.store</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_discrepancy_report_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_submit"
+                        string="Gửi Merchandise"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft' or submitted_to_merchandise"/>
+                <field name="submitted_to_merchandise" invisible="1"/>
+            </xpath>
+            <xpath expr="//button[@name='action_create_replenishment_po']" position="attributes">
+                <attribute name="invisible">reason != 'shortage' or replenishment_po_id or state != 'draft' or not purchase_id</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_create_return_picking']" position="attributes">
+                <attribute name="invisible">reason != 'overage' or return_picking_id or state != 'draft' or not purchase_id</attribute>
+            </xpath>
+            <xpath expr="//field[@name='purchase_id']" position="before">
+                <field name="picking_id"/>
+                <field name="mer_request_id" readonly="1"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_discrepancy_report_tree_inherit_store" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.tree.inherit.store</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_discrepancy_report_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='date_discrepancy']" position="after">
+                <field name="picking_id" optional="show"/>
+                <field name="mer_request_id" optional="show"/>
+                <field name="submitted_to_merchandise" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_store_discrepancy_report_overage" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận dư hàng</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'overage'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="context">{'default_reason': 'overage'}</field>
+    </record>
+
+    <record id="action_store_discrepancy_report_shortage" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận thiếu hàng</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'shortage'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="context">{'default_reason': 'shortage'}</field>
+    </record>
+
+    <record id="menu_mer_excess_receipt" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_store_discrepancy_report_overage"/>
+    </record>
+
+    <menuitem id="menu_store_discrepancy_shortage"
+              name="Báo cáo nhận thiếu hàng"
+              parent="store_management.menu_store_receipts_pending"
+              action="store_management.action_store_discrepancy_report_shortage"
+              sequence="25"
+              groups="store_management.group_store_user"/>
 </odoo>

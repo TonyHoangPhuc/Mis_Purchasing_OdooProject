@@ -1,4 +1,5 @@
 from odoo import api, fields, models
+from collections import defaultdict
 
 
 class SaleOrder(models.Model):
@@ -30,7 +31,26 @@ class SaleOrder(models.Model):
         store = self._get_sale_store()
         if not store:
             return self.env["product.product"]
-        return store.product_line_ids.filtered("active").mapped("product_id")
+        active_products = store.product_line_ids.filtered("active").mapped("product_id")
+        if not active_products or not store.warehouse_id or not store.warehouse_id.lot_stock_id:
+            return self.env["product.product"]
+
+        available_qty_by_product = defaultdict(float)
+        quants = self.env["stock.quant"].sudo().search(
+            [
+                ("product_id", "in", active_products.ids),
+                ("location_id", "child_of", store.warehouse_id.lot_stock_id.id),
+            ]
+        )
+        for quant in quants:
+            available_qty_by_product[quant.product_id.id] += quant.available_quantity
+
+        available_product_ids = [
+            product_id
+            for product_id, available_qty in available_qty_by_product.items()
+            if available_qty > 0
+        ]
+        return self.env["product.product"].browse(available_product_ids)
 
     @api.onchange("store_id")
     def _onchange_store_id(self):
@@ -78,6 +98,7 @@ class SaleOrderLine(models.Model):
         "sale_store_id.product_line_ids",
         "sale_store_id.product_line_ids.active",
         "sale_store_id.product_line_ids.product_id",
+        "order_id.warehouse_id",
     )
     def _compute_store_available_products(self):
         for line in self:

@@ -15,6 +15,16 @@
                 />
             </xpath>
 
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_confirm_central_stock_ready"
+                    type="object"
+                    string="X&#225;c nh&#7853;n &#273;&#7911; h&#224;ng"
+                    class="btn-success"
+                    invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or state not in ['approved', 'po_created']"
+                />
+            </xpath>
+
             <xpath expr="//button[@name='action_submit']" position="attributes">
                 <attribute name="invisible">context.get('central_check_menu') or (context.get('from_store_menu') and state != 'draft') or (not context.get('from_store_menu') and state != 'draft')</attribute>
             </xpath>
@@ -29,13 +39,20 @@
             </xpath>
             <xpath expr="//button[@name='action_create_po']" position="attributes">
                 <attribute name="string">Khởi tạo xử lý</attribute>
-                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'approved'</attribute>
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['approved', 'po_created']</attribute>
             </xpath>
             <xpath expr="//button[@name='action_draft']" position="attributes">
                 <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['rejected', 'cancel']</attribute>
             </xpath>
             <xpath expr="//button[@name='action_cancel']" position="attributes">
                 <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['draft', 'submitted']</attribute>
+            </xpath>
+
+            <xpath expr="//button[@name='action_create_po']" position="attributes">
+                <attribute name="string">Kh&#7903;i t&#7841;o PO</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_done']" position="attributes">
+                <attribute name="invisible">store_id or context.get('central_check_menu') or state not in ['approved', 'po_created']</attribute>
             </xpath>
 
             <xpath expr="//field[@name='warehouse_id']" position="before">
@@ -64,6 +81,7 @@
                 <field name="purchase_order_count" readonly="1" invisible="purchase_order_count == 0"/>
                 <field name="internal_line_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="pending_central_check_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="ready_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="waiting_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="insufficient_stock_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="central_flow_status" readonly="1" invisible="not context.get('central_check_menu')"/>
@@ -125,6 +143,8 @@
                             <field name="source_warehouse_id" readonly="1"/>
                             <field name="central_available_qty" readonly="1"/>
                             <field name="source_available_qty" readonly="1"/>
+                            <field name="remaining_after_dispatch_qty" readonly="1"/>
+                            <field name="stock_ready_to_dispatch" readonly="1"/>
                             <field name="availability_breakdown" readonly="1" optional="show"/>
                             <field name="internal_flow_state" readonly="1"/>
                             <field name="route_status_display" readonly="1"/>

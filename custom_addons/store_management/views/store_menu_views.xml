@@ -57,7 +57,7 @@
         <field name="res_model">stock.picking</field>
         <field name="view_mode">kanban,list,form</field>
         <field name="search_view_id" ref="warehouse_management.view_receiving_qc_search"/>
-        <field name="domain">[('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', 'not in', ('done', 'cancel'))]</field>
+        <field name="domain">[('location_dest_id.warehouse_id.mis_role', '=', 'store'), ('state', 'not in', ('done', 'cancel')), ('store_ready_for_receipt', '=', True)]</field>
         <field name="context">{}</field>
     </record>
 
@@ -96,13 +96,6 @@
         sequence="25"
         groups="store_management.group_store_user"
     />
-
-    <record id="action_store_receipts_pending_kanban" model="ir.actions.act_window.view">
-        <field name="sequence" eval="1"/>
-        <field name="view_mode">kanban</field>
-        <field name="view_id" ref="store_management.view_warehouse_receiving_qc_kanban"/>
-        <field name="act_window_id" ref="store_management.action_store_receipts_pending"/>
-    </record>
 
     <record id="action_store_receipts_pending_tree" model="ir.actions.act_window.view">
         <field name="sequence" eval="2"/>

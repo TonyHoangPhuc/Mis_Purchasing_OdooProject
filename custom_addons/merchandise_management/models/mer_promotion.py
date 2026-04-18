@@ -375,8 +375,9 @@ class MerPromotion(models.Model):
             products = record.product_ids
             record.write({'state': 'expired'})
             self._update_product_prices(products=products)
-class MerPromotionLine(models.Model):
-    _name = 'mer.promotion.line'
+class MerPromotionLineLegacy(models.Model):
+    _register = False
+    _name = 'mer.promotion.line.legacy'
     _description = 'Chi tiết dòng Khuyến mãi'
 
     promotion_id = fields.Many2one('mer.promotion', string='Chương trình KM', ondelete='cascade')

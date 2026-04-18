@@ -178,6 +178,22 @@ class MerExcessReceipt(models.Model):
                 })
             ],
         }
+        picking_vals = {
+            "picking_type_id": picking_type.id,
+            "location_id": excess_location.id,
+            "location_dest_id": self.picking_id.location_id.id,
+            "origin": self.name,
+            "move_ids": [
+                (0, 0, {
+                    "description_picking": "Thu hoi hang nhan du",
+                    "product_id": self.product_id.id,
+                    "product_uom_qty": self.discrepancy_qty,
+                    "product_uom": self.product_id.uom_id.id,
+                    "location_id": excess_location.id,
+                    "location_dest_id": self.picking_id.location_id.id,
+                })
+            ],
+        }
         picking = self.env["stock.picking"].create(picking_vals)
         picking.action_confirm()
 

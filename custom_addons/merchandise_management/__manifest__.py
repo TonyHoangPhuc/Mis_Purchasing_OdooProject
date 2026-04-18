@@ -12,7 +12,7 @@
         - Xử lý sai lệch hàng hóa
     """,
     'category': 'Custom_Odoo', # Phân loại app trên dashboard
-    'author': 'Your Name',
+    'author': 'Ngan',
     # Các module Odoo tiêu chuẩn cần cài đặt trước
     'depends': ['purchase', 'stock', 'product', 'uom', 'mail', 'purchase_stock'],
     # Thứ tự nạp các file dữ liệu và giao diện

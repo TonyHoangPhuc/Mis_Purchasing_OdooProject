@@ -1,5 +1,6 @@
 from . import mer_delivery_discrepancy
 from . import mer_delivery_discrepancy_wizard
+from . import mer_discrepancy_report
 from . import mer_purchase_request
 from . import product_product
 from . import product_template

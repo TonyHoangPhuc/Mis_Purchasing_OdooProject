@@ -78,11 +78,15 @@ class StockPicking(models.Model):
 
     @api.depends("purchase_id", "purchase_id.mer_request_id", "origin")
     def _compute_mer_request_id(self):
-        origins = {
+        raw_origins = {
             origin
             for origin in (self.mapped("origin") + self.mapped("purchase_id.origin"))
             if origin
         }
+        origins = set(raw_origins)
+        for origin in list(raw_origins):
+            if " - " in origin:
+                origins.add(origin.split(" - ", 1)[0].strip())
         requests_by_name = {}
         if origins:
             requests_by_name = {
@@ -94,8 +98,12 @@ class StockPicking(models.Model):
             request = picking.purchase_id.mer_request_id if picking.purchase_id else None
             if not request and picking.purchase_id and picking.purchase_id.origin:
                 request = requests_by_name.get(picking.purchase_id.origin)
+            if not request and picking.purchase_id and picking.purchase_id.origin and " - " in picking.purchase_id.origin:
+                request = requests_by_name.get(picking.purchase_id.origin.split(" - ", 1)[0].strip())
             if not request and picking.origin:
                 request = requests_by_name.get(picking.origin)
+            if not request and picking.origin and " - " in picking.origin:
+                request = requests_by_name.get(picking.origin.split(" - ", 1)[0].strip())
             picking.mer_request_id = request
 
     @api.depends(
