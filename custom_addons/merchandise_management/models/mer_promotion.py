@@ -118,8 +118,9 @@ class MerPromotion(models.Model):
             # Sau khi ghi xong, tính lại tổng tồn dựa trên các dòng thực tế
             total_qty = sum(self.line_ids.mapped('qty_in_stores'))
             product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in self.line_ids])
+            actual_locations = store_quants.filtered(lambda q: q.lot_id in valid_lots).mapped('location_id')
             msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s tại %s.\n%s") % (
-                len(valid_lots), total_qty, ", ".join(store_locations.mapped('display_name')), product_details
+                len(valid_lots), total_qty, ", ".join(actual_locations.mapped('display_name')), product_details
             )
             self.write({'description': (new_description + "\n" + msg).strip()})
             return {
@@ -286,8 +287,9 @@ class MerPromotion(models.Model):
             # Sau khi tạo xong, tính lại tổng tồn kho thực tế của các dòng để ghi vào mô tả
             total_qty_actual = sum(new_promo.line_ids.mapped('qty_in_stores'))
             product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in new_promo.line_ids])
+            actual_locations = store_quants.filtered(lambda q: q.lot_id.id in all_lot_ids).mapped('location_id')
             msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s tại %s.\n%s") % (
-                len(products_map), total_qty_actual, ", ".join(store_locations.mapped('display_name')), product_details
+                len(products_map), total_qty_actual, ", ".join(actual_locations.mapped('display_name')), product_details
             )
             new_promo.write({'description': msg})
 
