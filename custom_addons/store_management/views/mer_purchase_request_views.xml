@@ -39,7 +39,7 @@
             </xpath>
             <xpath expr="//button[@name='action_create_po']" position="attributes">
                 <attribute name="string">Khởi tạo xử lý</attribute>
-                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['approved', 'po_created']</attribute>
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['approved', 'po_created'] or not can_create_processing</attribute>
             </xpath>
             <xpath expr="//button[@name='action_draft']" position="attributes">
                 <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['rejected', 'cancel']</attribute>
@@ -79,6 +79,7 @@
             <xpath expr="//field[@name='manager_id']" position="after">
                 <field name="internal_picking_count" readonly="1" invisible="internal_picking_count == 0"/>
                 <field name="purchase_order_count" readonly="1" invisible="purchase_order_count == 0"/>
+                <field name="can_create_processing" invisible="1"/>
                 <field name="internal_line_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="pending_central_check_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="ready_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>

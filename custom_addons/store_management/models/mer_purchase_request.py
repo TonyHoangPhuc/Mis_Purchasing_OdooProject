@@ -43,6 +43,10 @@ class MerPurchaseRequest(models.Model):
         compute="_compute_document_counts",
         search="_search_purchase_order_count",
     )
+    can_create_processing = fields.Boolean(
+        string="Can Create Processing",
+        compute="_compute_document_counts",
+    )
     internal_line_count = fields.Integer(
         string="Dòng nội bộ",
         compute="_compute_internal_flow_metrics",
@@ -144,11 +148,18 @@ class MerPurchaseRequest(models.Model):
                     _("Từ menu Cửa hàng, bạn chỉ được tạo PR, gửi PR và theo dõi trạng thái xử lý.")
                 )
 
-    @api.depends("line_ids.purchase_order_id", "line_ids.internal_picking_id")
+    @api.depends("line_ids.fulfillment_method", "line_ids.purchase_order_id", "line_ids.internal_picking_id")
     def _compute_document_counts(self):
         for request in self:
             request.purchase_order_count = len(request.line_ids.mapped("purchase_order_id"))
             request.internal_picking_count = len(request.line_ids.mapped("internal_picking_id"))
+            request.can_create_processing = bool(
+                request.line_ids.filtered(
+                    lambda line: line.fulfillment_method
+                    and not line.purchase_order_id
+                    and not line.internal_picking_id
+                )
+            )
 
     @api.depends(
         "line_ids.fulfillment_method",
