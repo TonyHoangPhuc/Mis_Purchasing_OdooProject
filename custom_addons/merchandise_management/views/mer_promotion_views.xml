@@ -10,6 +10,9 @@
                 <field name="default_code" string="Mã SKU" readonly="1"/>
                 <field name="lst_price" string="Giá gốc" readonly="1"/>
                 <field name="discount_rate" string="Mức giảm (%)" widget="float"/>
+                <field name="limit_qty"/>
+                <field name="sold_qty" readonly="1"/>
+                <field name="remaining_qty" readonly="1"/>
                 <field name="qty_in_stores" string="Tồn tại Cửa hàng" readonly="1" decoration-danger="qty_in_stores == 0"/>
             </list>
         </field>

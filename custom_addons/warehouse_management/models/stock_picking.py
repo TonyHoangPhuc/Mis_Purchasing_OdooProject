@@ -169,8 +169,23 @@ class StockPicking(models.Model):
             )
             if picking.state not in ("done", "cancel"):
                 pickings_to_validate |= picking
+            
         if pickings_to_validate:
             res = pickings_to_validate.button_validate()
+            
+            # Sau khi nhập kho xong, tiến hành tự động tạo hóa đơn
+            for picking in pickings_to_validate:
+                if picking.state == 'done' and picking.wm_qc_status == 'passed':
+                    # 1. Tự động tạo hóa đơn NCC (Vendor Bill) cho PO
+                    if picking.purchase_id and picking.purchase_id.invoice_status == 'to invoice':
+                        try:
+                            # Sử dụng lệnh tạo hóa đơn từ PO
+                            picking.purchase_id.with_context(create_bill=True).action_create_invoice()
+                        except Exception:
+                            pass
+                    
+
+
             # Tự động Hoàn tất PO nếu đã nhận đủ hàng
             for picking in pickings_to_validate:
                 if picking.purchase_id and picking.state == 'done':

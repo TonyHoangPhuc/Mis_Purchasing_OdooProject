@@ -25,9 +25,20 @@
                 />
             </xpath>
 
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_create_po"
+                    type="object"
+                    string="Tạo Purchase Order"
+                    class="btn-success"
+                    invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or state not in ['approved']"
+                />
+            </xpath>
+
             <xpath expr="//button[@name='action_submit']" position="attributes">
                 <attribute name="invisible">context.get('central_check_menu') or (context.get('from_store_menu') and state != 'draft') or (not context.get('from_store_menu') and state != 'draft')</attribute>
             </xpath>
+
             <xpath expr="//button[@name='action_send_to_manager']" position="attributes">
                 <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'submitted'</attribute>
             </xpath>
@@ -86,6 +97,13 @@
                 <field name="waiting_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="insufficient_stock_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="central_flow_status" readonly="1" invisible="not context.get('central_check_menu')"/>
+
+            </xpath>
+
+            <xpath expr="//group[@class='oe_subtotal_footer oe_right']" position="replace">
+                <group class="oe_subtotal_footer oe_right">
+                    <field name="amount_total" string="Tổng tiền dự kiến" widget="monetary" readonly="1" decoration-bf="1"/>
+                </group>
             </xpath>
 
             <xpath expr="//page[@name='lines']/field[@name='line_ids']" position="replace">
@@ -94,6 +112,8 @@
                         <field name="product_id"/>
                         <field name="product_qty" string="Số lượng yêu cầu"/>
                         <field name="product_uom_id" readonly="1"/>
+                        <field name="price_unit" string="Đơn giá dự kiến"/>
+                        <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
                     </list>
                 </field>
             </xpath>
@@ -108,13 +128,15 @@
                             <field name="product_uom_id" readonly="1"/>
                             <field name="fulfillment_method"/>
                             <field name="source_warehouse_id" invisible="fulfillment_method not in ['internal', 'supplier_central']"/>
-                            <field name="source_available_qty" readonly="1" invisible="fulfillment_method != 'internal'"/>
+                            <field name="source_available_qty" string="Tồn thực tế kho nguồn" readonly="1" invisible="fulfillment_method != 'internal'"/>
                             <field
                                 name="supplier_id"
                                 invisible="fulfillment_method not in ['supplier', 'supplier_central']"
                                 domain="[('category_id.name', '=', 'NCC')]"
                                 context="{'only_supplier_contacts': True}"
                             />
+                            <field name="price_unit" string="Đơn giá"/>
+                            <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
                             <field name="route_status_display" readonly="1"/>
                             <field name="internal_picking_id" readonly="1" optional="show"/>
                             <field name="purchase_order_id" readonly="1" optional="show"/>
@@ -126,10 +148,11 @@
                         <list create="0" delete="0">
                             <field name="product_id" readonly="1"/>
                             <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
-                            <field name="approved_qty" string="Số lượng được duyệt" readonly="1"/>
-                            <field name="central_on_hand_qty" readonly="1"/>
-                            <field name="central_available_qty" readonly="1"/>
-                            <field name="availability_breakdown" readonly="1"/>
+                            <field name="price_unit" string="Đơn giá" readonly="1"/>
+                            <field name="price_subtotal" string="Thành tiền mua" readonly="1" sum="Tổng tiền mua"/>
+                            <field name="central_on_hand_qty" string="Tồn thực tế kho tổng" readonly="1"/>
+                            <field name="central_stock_value" string="Giá trị tồn kho" readonly="1" sum="Tổng tồn kho"/>
+                            <field name="availability_breakdown" readonly="1" optional="hide"/>
                             <button name="action_view_supply_stock" type="object" string="Xem tồn" class="btn-link"/>
                         </list>
                     </field>
@@ -140,10 +163,12 @@
                             <field name="product_id" readonly="1"/>
                             <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
                             <field name="approved_qty" string="Số lượng được duyệt" readonly="1"/>
+                            <field name="price_unit" string="Đơn giá" readonly="1"/>
+                            <field name="price_subtotal" string="Thành tiền" readonly="1" sum="Tổng tiền"/>
                             <field name="fulfillment_method" readonly="1"/>
                             <field name="source_warehouse_id" readonly="1"/>
-                            <field name="central_available_qty" readonly="1"/>
-                            <field name="source_available_qty" readonly="1"/>
+                            <field name="central_on_hand_qty" string="Tồn thực tế kho tổng" readonly="1"/>
+                            <field name="source_available_qty" string="Tồn thực tế kho nguồn" readonly="1"/>
                             <field name="remaining_after_dispatch_qty" readonly="1"/>
                             <field name="stock_ready_to_dispatch" readonly="1"/>
                             <field name="availability_breakdown" readonly="1" optional="show"/>

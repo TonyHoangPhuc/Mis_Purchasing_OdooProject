@@ -86,6 +86,35 @@ class StoreStore(models.Model):
         compute="_compute_counts",
         search="_search_needs_replenishment",
     )
+    total_internal_cost = fields.Monetary(
+        string="Tổng chi phí điều chuyển",
+        compute="_compute_financial_metrics",
+        currency_field="currency_id",
+        store=True,
+    )
+    total_sales_revenue = fields.Monetary(
+        string="Tổng doanh thu cửa hàng",
+        compute="_compute_financial_metrics",
+        currency_field="currency_id",
+        store=True,
+    )
+    gross_profit = fields.Monetary(
+        string="Lợi nhuận gộp",
+        compute="_compute_financial_metrics",
+        currency_field="currency_id",
+        store=True,
+    )
+    profit_margin = fields.Float(
+        string="Tỷ suất lợi nhuận (%)",
+        compute="_compute_financial_metrics",
+        store=True,
+    )
+    currency_id = fields.Many2one(
+        "res.currency",
+        string="Tiền tệ",
+        related="company_id.currency_id",
+        readonly=True,
+    )
 
     _sql_constraints = [
         ("store_code_company_uniq", "unique(code, company_id)", "Mã cửa hàng phải là duy nhất theo công ty."),
@@ -134,6 +163,27 @@ class StoreStore(models.Model):
             store.needs_replenishment = bool(store.replenishment_count)
             store.purchase_request_count = purchase_request_count_map.get(store.id, 0)
             store.sales_order_count = sale_order_count_map.get(store.id, 0)
+
+    def _compute_financial_metrics(self):
+        for store in self:
+            # Bỏ quyết toán nội bộ theo yêu cầu
+            total_cost = 0.0
+            
+            # 2. Tính doanh thu từ Sale Orders
+            sales = self.env["sale.order"].search([
+                ("store_id", "=", store.id),
+                ("state", "in", ("sale", "done")),
+            ])
+            total_revenue = sum(sales.mapped("amount_untaxed"))
+            
+            # 3. Tính Lợi nhuận
+            profit = total_revenue - total_cost
+            margin = (profit / total_revenue * 100) if total_revenue else 0.0
+            
+            store.total_internal_cost = total_cost
+            store.total_sales_revenue = total_revenue
+            store.gross_profit = profit
+            store.profit_margin = margin
 
     def _search_needs_replenishment(self, operator, value):
         if operator not in ("=", "!=") or not isinstance(value, bool):

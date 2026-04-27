@@ -27,6 +27,7 @@ class ProductTemplate(models.Model):
 
     # Trường lưu giá KM đang áp dụng (được Scheduler tự động cập nhật)
     current_promotion_price = fields.Float(string='Giá khuyến mãi hiện tại', company_dependent=True)
+    current_promotion_line_id = fields.Many2one('mer.promotion.line', string='Dòng Khuyến mãi đang áp dụng', company_dependent=True)
 
     # Cấu hình KM hàng cận hạn riêng cho từng sản phẩm
     x_mer_expiry_days = fields.Integer(string='Ngày báo trước cận hạn', default=30, help="Số ngày trước khi hết hạn để bắt đầu chạy khuyến mãi.")
@@ -37,3 +38,4 @@ class ProductProduct(models.Model):
     _inherit = 'product.product'
 
     current_promotion_price = fields.Float(related='product_tmpl_id.current_promotion_price', readonly=False)
+    current_promotion_line_id = fields.Many2one(related='product_tmpl_id.current_promotion_line_id', readonly=False)

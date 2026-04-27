@@ -22,6 +22,30 @@ class MerPurchaseRequestLine(models.Model):
     product_id = fields.Many2one('product.product', string='Sản phẩm', required=True)
     product_qty = fields.Float(string='Số lượng', default=1.0)
     product_uom_id = fields.Many2one('uom.uom', string='Đơn vị tính', related='product_id.uom_id')
+    
+    price_unit = fields.Float(string='Đơn giá dự kiến', digits='Product Price')
+    price_subtotal = fields.Float(string='Thành tiền', compute='_compute_price_subtotal', store=True)
+
+    @api.depends('product_qty', 'price_unit')
+    def _compute_price_subtotal(self):
+        for line in self:
+            line.price_subtotal = line.product_qty * line.price_unit
+
+    @api.onchange('product_id', 'supplier_id')
+    def _onchange_product_id_price(self):
+        if self.product_id:
+            # 1. Ưu tiên lấy giá từ NCC tại dòng (Tab Phương án xử lý)
+            # 2. Nếu dòng không có NCC, lấy giá từ NCC trên Header phiếu
+            partner = getattr(self, 'supplier_id', False) or self.request_id.partner_id
+            
+            if partner:
+                supplier_info = self.product_id.seller_ids.filtered(lambda s: s.partner_id == partner)[:1]
+                if supplier_info:
+                    self.price_unit = supplier_info.price
+                    return
+            
+            # 3. Nếu hoàn toàn không có NCC, lấy giá tiêu chuẩn của sản phẩm
+            self.price_unit = self.product_id.standard_price
 
 # Quy trình phê duyệt yêu cầu mua hàng (PR)
 class MerPurchaseRequest(models.Model):
@@ -50,6 +74,14 @@ class MerPurchaseRequest(models.Model):
     date_request = fields.Date(string='Ngày yêu cầu', default=fields.Date.today)
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')
+    
+    amount_total = fields.Float(string='Tổng tiền dự kiến', compute='_compute_amount_total', store=True)
+    payment_term_id = fields.Many2one('account.payment.term', string='Điều khoản thanh toán')
+
+    @api.depends('line_ids.price_subtotal')
+    def _compute_amount_total(self):
+        for request in self:
+            request.amount_total = sum(line.price_subtotal for line in request.line_ids)
     
     purchase_order_count = fields.Integer(
         string='Số PO',
@@ -146,6 +178,12 @@ class MerPurchaseRequest(models.Model):
                 self.partner_id = company_partner
         return {'domain': {'partner_id': domain}}
 
+    # Cập nhật giá sản phẩm khi đổi NCC
+    @api.onchange('partner_id')
+    def _onchange_partner_id_prices(self):
+        for line in self.line_ids:
+            line._onchange_product_id_price()
+
     # Gửi yêu cầu mua hàng
     def action_submit(self):
         for request in self:
@@ -155,6 +193,9 @@ class MerPurchaseRequest(models.Model):
 
     # Gửi lên Quản lý duyệt
     def action_send_to_manager(self):
+        for request in self:
+            if not request.payment_term_id:
+                raise UserError(_("Vui lòng chọn Điều khoản thanh toán trước khi trình Quản lý!"))
         self.write({'state': 'to_approve'})
 
     # Phê duyệt yêu cầu
@@ -189,6 +230,7 @@ class MerPurchaseRequest(models.Model):
             'partner_id': self.partner_id.id,
             'origin': self.name,
             'date_order': fields.Datetime.now(),
+            'payment_term_id': self.payment_term_id.id,
             'order_line': [],
         }
         
@@ -201,7 +243,7 @@ class MerPurchaseRequest(models.Model):
                 'name': line.product_id.name,
                 'product_qty': line.product_qty,
                 'product_uom_id': line.product_uom_id.id,
-                'price_unit': line.product_id.standard_price,
+                'price_unit': line.price_unit,
                 'date_planned': fields.Datetime.now(),
             }))
             

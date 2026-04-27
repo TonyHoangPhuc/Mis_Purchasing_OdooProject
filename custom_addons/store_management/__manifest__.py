@@ -12,6 +12,7 @@
         "sale_stock",
         "merchandise_management",
         "warehouse_management",
+        "account",
     ],
     "data": [
         "data/mer_excess_receipt_data.xml",
@@ -20,6 +21,7 @@
         "views/store_store_views.xml",
         "views/store_product_views.xml",
         "views/mer_purchase_request_views.xml",
+        "views/account_move_views.xml",
         "views/sale_order_views.xml",
         "views/store_menu_views.xml",
         "views/mer_delivery_discrepancy_views.xml",

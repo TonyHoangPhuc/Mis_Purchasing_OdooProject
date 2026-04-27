@@ -16,7 +16,7 @@ class MerPromotion(models.Model):
     _description = 'Kế hoạch khuyến mãi Merchandise'
     _inherit = ['mail.thread', 'mail.activity.mixin']
 
-    name = fields.Char(string='Tên chương trình', required=True)
+    name = fields.Char(string='Tên chương trình', required=False)
     code = fields.Char(string='Mã khuyến mãi', required=True, readonly=True, copy=False, default=lambda self: _('New'))
     
     state = fields.Selection([
@@ -88,7 +88,12 @@ class MerPromotion(models.Model):
         existing_product_ids = self.line_ids.mapped('product_id').ids
         seen_products = set(existing_product_ids)
         
+        # Tính toán SL cận hạn cho từng sản phẩm
+        product_lot_qtys = {}
         for lot in valid_lots:
+            lot_qty = sum(store_quants.filtered(lambda q: q.lot_id == lot).mapped('quantity'))
+            product_lot_qtys[lot.product_id.id] = product_lot_qtys.get(lot.product_id.id, 0.0) + lot_qty
+            
             lot_locations = store_quants.filtered(lambda q: q.lot_id == lot).mapped('location_id')
             lot_warehouses = lot_locations.mapped('warehouse_id')
             
@@ -96,9 +101,16 @@ class MerPromotion(models.Model):
             if lot.product_id.id not in seen_products:
                 line_vals.append((0, 0, {
                     'product_id': lot.product_id.id,
-                    'discount_rate': lot.product_id.x_mer_expiry_discount or 20.0
+                    'discount_rate': lot.product_id.x_mer_expiry_discount or 20.0,
+                    'limit_qty': product_lot_qtys[lot.product_id.id]
                 }))
                 seen_products.add(lot.product_id.id)
+            else:
+                # Nếu sản phẩm đã có trong line_vals (vừa mới thêm ở vòng lặp trước), cập nhật SL
+                # Đây là trường hợp 1 SP có nhiều lô cận hạn
+                for vals in line_vals:
+                    if vals[2].get('product_id') == lot.product_id.id:
+                        vals[2]['limit_qty'] = product_lot_qtys[lot.product_id.id]
             
             warehouse_ids.extend(lot_warehouses.ids)
         
@@ -109,12 +121,29 @@ class MerPromotion(models.Model):
             if "--- Cập nhật:" in new_description:
                 new_description = new_description.split("--- Cập nhật:")[0].strip()
 
+            # Cập nhật thông tin cơ bản và kho trước để qty_in_stores tính toán đúng
             self.write({
                 'is_expiry_promo': True,
-                'line_ids': line_vals,
                 'lot_ids': [(6, 0, valid_lots.ids)],
                 'target_store_ids': [(6, 0, list(set(warehouse_ids)))],
             })
+
+            # Sau đó mới cập nhật/thêm dòng sản phẩm
+            total_line_vals = []
+            for product_id, qty in product_lot_qtys.items():
+                existing_line = self.line_ids.filtered(lambda l: l.product_id.id == product_id)
+                if existing_line:
+                    total_line_vals.append((1, existing_line[0].id, {'limit_qty': qty}))
+                else:
+                    product = self.env['product.product'].browse(product_id)
+                    total_line_vals.append((0, 0, {
+                        'product_id': product_id,
+                        'discount_rate': product.x_mer_expiry_discount or 20.0,
+                        'limit_qty': qty
+                    }))
+            
+            if total_line_vals:
+                self.write({'line_ids': total_line_vals})
             # Sau khi ghi xong, tính lại tổng tồn dựa trên các dòng thực tế
             total_qty = sum(self.line_ids.mapped('qty_in_stores'))
             product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in self.line_ids])
@@ -156,19 +185,23 @@ class MerPromotion(models.Model):
                 if not line.product_id:
                     continue
                 price = line.product_id.lst_price * (1 - (line.discount_rate / 100.0))
-                if line.product_id.id not in promo_data or price < promo_data[line.product_id.id]:
-                    promo_data[line.product_id.id] = price
+                if line.product_id.id not in promo_data or price < promo_data[line.product_id.id]['price']:
+                    promo_data[line.product_id.id] = {'price': price, 'line_id': line.id}
         
         # 3. Xác định danh sách sản phẩm cần cập nhật
         # Nếu không truyền vào products, chúng ta sẽ quét toàn bộ sản phẩm đang có giá KM để reset nếu cần
         if products is None:
             products = self.env['product.product'].search(['|', ('current_promotion_price', '>', 0), ('id', 'in', list(promo_data.keys()))])
 
-        # 4. Ghi đè giá KM mới
+        # 4. Ghi đè giá KM mới và liên kết dòng KM
         for product in products:
-            new_price = promo_data.get(product.id, 0.0)
-            if product.current_promotion_price != new_price:
-                product.current_promotion_price = new_price
+            new_data = promo_data.get(product.id, {'price': 0.0, 'line_id': False})
+            new_price, new_line_id = new_data['price'], new_data['line_id']
+            if product.current_promotion_price != new_price or product.current_promotion_line_id.id != new_line_id:
+                product.write({
+                    'current_promotion_price': new_price,
+                    'current_promotion_line_id': new_line_id
+                })
 
     # Scheduler định kỳ cập nhật KM
     @api.model
@@ -260,29 +293,42 @@ class MerPromotion(models.Model):
             promo_name = _("KM Hàng cận hạn - %s") % today.strftime('%d/%m/%Y')
             
             all_lot_ids = [p['lot_id'] for p in products_map]
-            all_warehouse_ids = []
-            line_vals = []
+            product_qtys = {}
+            for p in products_map:
+                product_qtys[p['product_id'].id] = product_qtys.get(p['product_id'].id, 0.0) + p['qty']
+
             seen_products = set()
             for p in products_map:
                 all_warehouse_ids.extend(p['warehouses'].ids)
                 if p['product_id'].id not in seen_products:
                     line_vals.append((0, 0, {
                         'product_id': p['product_id'].id,
-                        'discount_rate': 0.0 # Để trống mức giảm để người dùng tự điền
+                        'discount_rate': 0.0, # Để trống mức giảm để người dùng tự điền
+                        'limit_qty': product_qtys[p['product_id'].id]
                     }))
                     seen_products.add(p['product_id'].id)
             
-            # Tạo bản ghi KM
+            # Tạo bản ghi KM với kho trước
             new_promo = self.create({
                 'name': promo_name,
                 'code': "EXP-%s" % today.strftime('%Y%m%d%H%M'), 
                 'is_expiry_promo': True,
-                'line_ids': line_vals,
-                'lot_ids': [(6, 0, list(set(all_lot_ids)))],
                 'target_store_ids': [(6, 0, list(set(all_warehouse_ids)))],
+                'lot_ids': [(6, 0, list(set(all_lot_ids)))],
                 'date_start': today,
-                'date_end': False, # Để trống ngày kết thúc
+                'date_end': False,
             })
+            
+            # Sau khi có record và kho, tạo các dòng sản phẩm
+            line_vals = []
+            for product_id, qty in product_qtys.items():
+                product = self.env['product.product'].browse(product_id)
+                line_vals.append((0, 0, {
+                    'product_id': product_id,
+                    'discount_rate': 0.0,
+                    'limit_qty': qty
+                }))
+            new_promo.write({'line_ids': line_vals})
             
             # Sau khi tạo xong, tính lại tổng tồn kho thực tế của các dòng để ghi vào mô tả
             total_qty_actual = sum(new_promo.line_ids.mapped('qty_in_stores'))
@@ -303,6 +349,8 @@ class MerPromotion(models.Model):
     # Kích hoạt chương trình và gửi thông báo
     def action_activate(self):
         for promotion in self:
+            if not promotion.name:
+                raise UserError(_("Vui lòng nhập Tên chương trình trước khi kích hoạt."))
             if not promotion.code:
                 raise UserError(_("Vui lòng nhập Mã khuyến mãi trước khi kích hoạt."))
             if not promotion.line_ids:

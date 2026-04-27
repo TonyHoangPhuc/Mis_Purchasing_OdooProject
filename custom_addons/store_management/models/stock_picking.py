@@ -444,6 +444,11 @@ class StockPicking(models.Model):
 
     def _sync_related_mer_request_state(self):
         requests = (self.mapped("mer_request_id") | self.mapped("move_ids.picking_id.mer_request_id")).filtered(bool)
+        request_lines = self.env["mer.purchase.request.line"].search([
+            "|", ("internal_picking_id", "in", self.ids), 
+                 ("store_receipt_picking_id", "in", self.ids)
+        ])
+        requests |= request_lines.mapped("request_id").filtered(bool)
         if requests:
             requests._sync_state_with_logistics()
 
@@ -605,6 +610,7 @@ class StockPicking(models.Model):
 
             # 2. Tạo phiếu nhận hàng tương ứng cho Cửa hàng
             store_picking = self.env["stock.picking"].with_context(skip_transit_interception=True).sudo().create({
+                "mer_request_id": picking.mer_request_id.id,
                 "partner_id": picking.location_id.warehouse_id.partner_id.id if picking.location_id.warehouse_id.partner_id else False,
                 "picking_type_id": store_warehouse.in_type_id.id,
                 "location_id": transit_location.id,

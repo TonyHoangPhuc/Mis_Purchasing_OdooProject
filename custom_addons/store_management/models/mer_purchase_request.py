@@ -254,19 +254,12 @@ class MerPurchaseRequest(models.Model):
 
     def _get_relevant_supply_warehouses(self):
         self.ensure_one()
-        warehouses = self.env["stock.warehouse"].search(
-            [
-                ("company_id", "=", self.company_id.id),
-                ("mis_role", "=", "central"),
-            ]
-        )
-        if warehouses:
-            return warehouses
+        # B\u1eaeT BUỘC PHẢI CHỌN VAI TRÒ là Kho tổng (Central)
         return self.env["stock.warehouse"].search(
             [
                 ("company_id", "=", self.company_id.id),
                 ("id", "!=", self.warehouse_id.id),
-                ("mis_role", "!=", "store"),
+                ("mis_role", "=", "central"),
             ]
         )
 
@@ -423,9 +416,19 @@ class MerPurchaseRequest(models.Model):
 
             all_completed = all(request._is_line_logistically_completed(line) for line in lines)
             has_started_documents = any(line.purchase_order_id or line.internal_picking_id for line in lines)
-
+            
             if all_completed:
                 request.state = "done"
+                # 2. Tự động tạo hóa đơn NCC cho các PO liên quan nếu chưa có
+                relevant_pos = request.line_ids.mapped('purchase_order_id').filtered(
+                    lambda po: po.state in ('purchase', 'done') and po.invoice_status == 'to invoice'
+                )
+                for po in relevant_pos:
+                    try:
+                        # Gọi logic tạo hóa đơn của Odoo cho PO
+                        po.with_context(create_bill=True).action_create_invoice()
+                    except Exception as e:
+                        request.message_post(body=_("Hệ thống không thể tự động tạo hóa đơn cho PO %s: %s") % (po.name, str(e)))
             elif has_started_documents:
                 request.state = "po_created"
 
@@ -454,6 +457,7 @@ class MerPurchaseRequest(models.Model):
             # 1. Create Central Delivery Picking (WH -> Transit)
             central_picking = self.env["stock.picking"].sudo().create(
                 {
+                    "mer_request_id": self.id,
                     "partner_id": self.store_id.partner_id.id if self.store_id and self.store_id.partner_id else False,
                     "picking_type_id": source_warehouse.out_type_id.id or source_warehouse.int_type_id.id,
                     "location_id": source_warehouse.lot_stock_id.id,
@@ -485,6 +489,7 @@ class MerPurchaseRequest(models.Model):
             if transit_location:
                 store_picking = self.env["stock.picking"].sudo().create(
                     {
+                        "mer_request_id": self.id,
                         "partner_id": source_warehouse.partner_id.id if source_warehouse.partner_id else False,
                         "picking_type_id": self.warehouse_id.in_type_id.id,
                         "location_id": dest_location.id,
@@ -603,6 +608,7 @@ class MerPurchaseRequest(models.Model):
                     "partner_id": supplier.id,
                     "origin": self.name,
                     "date_order": fields.Datetime.now(),
+                    "payment_term_id": self.payment_term_id.id,
                     "picking_type_id": target_warehouse.in_type_id.id,
                     "order_line": [
                         (
@@ -613,7 +619,7 @@ class MerPurchaseRequest(models.Model):
                                 "name": line.product_id.display_name,
                                 "product_qty": line.approved_qty,
                                 "product_uom_id": line.product_uom_id.id,
-                                "price_unit": line.product_id.standard_price,
+                                "price_unit": line.price_unit,
                                 "date_planned": fields.Datetime.now(),
                             },
                         )
@@ -644,6 +650,7 @@ class MerPurchaseRequest(models.Model):
             "view_mode": "form",
             "target": "current",
         }
+
 
     def action_confirm_central_stock(self):
         self.ensure_one()
@@ -959,6 +966,11 @@ class MerPurchaseRequestLine(models.Model):
         string="Tồn theo kho",
         compute="_compute_supply_metrics",
     )
+    central_stock_value = fields.Float(
+        string="Giá trị tồn sẵn có",
+        compute="_compute_supply_metrics",
+    )
+
 
     def _get_product_supplier_candidates(self):
         self.ensure_one()
@@ -1091,6 +1103,8 @@ class MerPurchaseRequestLine(models.Model):
         "request_company_id",
         "request_warehouse_id",
         "source_warehouse_id",
+        "approved_qty",
+        "price_unit",
     )
     def _compute_supply_metrics(self):
         quant_model = self.env["stock.quant"].sudo()
@@ -1099,31 +1113,59 @@ class MerPurchaseRequestLine(models.Model):
             line.central_available_qty = 0.0
             line.other_warehouses_qty = 0.0
             line.source_available_qty = 0.0
-            line.availability_breakdown = False
+            line.central_stock_value = 0.0
+            # Kiểm tra xem các trường báo cáo có tồn tại không trước khi gán
+            if hasattr(line, 'remaining_after_dispatch_qty'):
+                line.remaining_after_dispatch_qty = 0.0
+            if hasattr(line, 'stock_ready_to_dispatch'):
+                line.stock_ready_to_dispatch = False
+            line.availability_breakdown = ""
+            
             if not line.product_id or not line.request_id:
                 continue
 
-            company_id = line.request_company_id.id
+            company_id = line.request_company_id.id or self.env.company.id
             warehouses = line.request_id._get_relevant_supply_warehouses().filtered(
                 lambda wh: wh.company_id.id == company_id
             )
+            
+            scanned_wh_names = warehouses.mapped('name')
             breakdown = []
             for warehouse in warehouses:
-                quants = quant_model.search(
-                    [
-                        ("product_id", "=", line.product_id.id),
-                        ("location_id", "child_of", warehouse.lot_stock_id.id),
-                    ]
-                )
+                # Tìm quants tại kho
+                quants = quant_model.search([
+                    ("product_id", "=", line.product_id.id),
+                    ("location_id", "child_of", warehouse.lot_stock_id.id),
+                ])
+                
                 qty = sum(quants.mapped("quantity"))
                 available = sum(quants.mapped("available_quantity"))
+                
                 line.central_on_hand_qty += qty
                 line.central_available_qty += available
-                if qty or available:
-                    breakdown.append("%s: %.2f / %.2f" % (warehouse.display_name, qty, available))
-                if line.source_warehouse_id and warehouse == line.source_warehouse_id:
-                    line.source_available_qty = available
-            line.availability_breakdown = " | ".join(breakdown)
+                
+                if qty > 0 or available > 0:
+                    breakdown.append("%s: %.0f (Tồn: %.0f)" % (warehouse.name, qty, available))
+                
+                if line.source_warehouse_id and warehouse.id == line.source_warehouse_id.id:
+                    # Lấy Tồn thực tế (qty) thay vì Khả dụng (available) theo ý người dùng
+                    line.source_available_qty = qty
+            
+            if not warehouses:
+                line.availability_breakdown = _("Chưa thiết lập Kho tổng cho công ty này.")
+            elif not breakdown:
+                line.availability_breakdown = _("Không thấy tồn kẹo tại: %s") % ", ".join(scanned_wh_names)
+            else:
+                line.availability_breakdown = " | ".join(breakdown)
+                
+            if hasattr(line, 'remaining_after_dispatch_qty'):
+                line.remaining_after_dispatch_qty = line.source_available_qty - line.approved_qty
+            if hasattr(line, 'stock_ready_to_dispatch'):
+                line.stock_ready_to_dispatch = line.source_available_qty >= line.approved_qty
+                
+            # Lấy giá trị tồn kho dựa trên CHI PHÍ (Cost) của sản phẩm
+            price = line.product_id.standard_price or 0.0
+            line.central_stock_value = line.central_on_hand_qty * price
 
     def action_view_supply_stock(self):
         self.ensure_one()
@@ -1258,46 +1300,4 @@ class MerPurchaseRequestLine(models.Model):
                     status = _("Chua chuyen sang Kho tong")
             line.route_status_display = status
 
-    @api.depends(
-        "product_id",
-        "request_company_id",
-        "request_warehouse_id",
-        "source_warehouse_id",
-        "approved_qty",
-    )
-    def _compute_supply_metrics(self):
-        quant_model = self.env["stock.quant"].sudo()
-        for line in self:
-            line.central_on_hand_qty = 0.0
-            line.central_available_qty = 0.0
-            line.other_warehouses_qty = 0.0
-            line.source_available_qty = 0.0
-            line.remaining_after_dispatch_qty = 0.0
-            line.stock_ready_to_dispatch = False
-            line.availability_breakdown = False
-            if not line.product_id or not line.request_id:
-                continue
-
-            company_id = line.request_company_id.id
-            warehouses = line.request_id._get_relevant_supply_warehouses().filtered(
-                lambda wh: wh.company_id.id == company_id
-            )
-            breakdown = []
-            for warehouse in warehouses:
-                quants = quant_model.search(
-                    [
-                        ("product_id", "=", line.product_id.id),
-                        ("location_id", "child_of", warehouse.lot_stock_id.id),
-                    ]
-                )
-                qty = sum(quants.mapped("quantity"))
-                available = sum(quants.mapped("available_quantity"))
-                line.central_on_hand_qty += qty
-                line.central_available_qty += available
-                if qty or available:
-                    breakdown.append("%s: %.2f / %.2f" % (warehouse.display_name, qty, available))
-                if line.source_warehouse_id and warehouse == line.source_warehouse_id:
-                    line.source_available_qty = available
-            line.remaining_after_dispatch_qty = line.source_available_qty - line.approved_qty
-            line.stock_ready_to_dispatch = line.source_available_qty >= line.approved_qty
-            line.availability_breakdown = " | ".join(breakdown)
+            line.route_status_display = status

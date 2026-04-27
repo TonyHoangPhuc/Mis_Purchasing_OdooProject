@@ -9,6 +9,8 @@
                 <field name="product_id" string="Sản phẩm"/>
                 <field name="product_qty" string="Số lượng"/>
                 <field name="product_uom_id" string="Đơn vị" groups="uom.group_uom"/>
+                <field name="price_unit" string="Đơn giá dự kiến"/>
+                <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
             </list>
         </field>
     </record>
@@ -56,7 +58,13 @@
                         </group>
                         <group>
                             <field name="manager_id" string="Người duyệt" readonly="1"/>
+                            <field name="payment_term_id" string="Điều khoản thanh toán" 
+                                   readonly="state in ['done', 'cancel']" 
+                                   groups="merchandise_management.group_merchandise_user"/>
                         </group>
+                    </group>
+                    <group class="oe_subtotal_footer oe_right">
+                        <field name="amount_total" string="Tổng tiền dự kiến" widget="monetary" readonly="1" decoration-bf="1"/>
                     </group>
                     <notebook>
                         <page string="Sản phẩm" name="lines">
@@ -84,6 +92,7 @@
                 <field name="user_id" string="Người tạo"/>
                 <field name="date_request" string="Ngày yêu cầu"/>
                 <field name="purchase_order_count" string="Số PO" optional="show"/>
+                <field name="amount_total" string="Tổng tiền" widget="monetary" sum="Tổng cộng" decoration-bf="1"/>
                 <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'submitted'" decoration-success="state == 'approved' or state == 'done'" decoration-warning="state == 'po_created'"/>
             </list>
         </field>
