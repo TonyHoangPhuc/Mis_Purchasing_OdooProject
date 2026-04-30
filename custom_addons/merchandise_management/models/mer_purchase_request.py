@@ -1,5 +1,17 @@
-from odoo import models, fields, api, _
+import operator as py_operator
+
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+
+
+COUNT_COMPARISON_OPERATORS = {
+    "=": py_operator.eq,
+    "!=": py_operator.ne,
+    ">": py_operator.gt,
+    ">=": py_operator.ge,
+    "<": py_operator.lt,
+    "<=": py_operator.le,
+}
 
 class MerPurchaseRequestLine(models.Model):
     _name = 'mer.purchase.request.line'
@@ -10,6 +22,30 @@ class MerPurchaseRequestLine(models.Model):
     product_id = fields.Many2one('product.product', string='Sản phẩm', required=True)
     product_qty = fields.Float(string='Số lượng', default=1.0)
     product_uom_id = fields.Many2one('uom.uom', string='Đơn vị tính', related='product_id.uom_id')
+    
+    price_unit = fields.Float(string='Đơn giá dự kiến', digits='Product Price')
+    price_subtotal = fields.Float(string='Thành tiền', compute='_compute_price_subtotal', store=True)
+
+    @api.depends('product_qty', 'price_unit')
+    def _compute_price_subtotal(self):
+        for line in self:
+            line.price_subtotal = line.product_qty * line.price_unit
+
+    @api.onchange('product_id', 'supplier_id')
+    def _onchange_product_id_price(self):
+        if self.product_id:
+            # 1. Ưu tiên lấy giá từ NCC tại dòng (Tab Phương án xử lý)
+            # 2. Nếu dòng không có NCC, lấy giá từ NCC trên Header phiếu
+            partner = getattr(self, 'supplier_id', False) or self.request_id.partner_id
+            
+            if partner:
+                supplier_info = self.product_id.seller_ids.filtered(lambda s: s.partner_id == partner)[:1]
+                if supplier_info:
+                    self.price_unit = supplier_info.price
+                    return
+            
+            # 3. Nếu hoàn toàn không có NCC, lấy giá tiêu chuẩn của sản phẩm
+            self.price_unit = self.product_id.standard_price
 
 # Quy trình phê duyệt yêu cầu mua hàng (PR)
 class MerPurchaseRequest(models.Model):
@@ -17,7 +53,7 @@ class MerPurchaseRequest(models.Model):
     _description = 'Yêu cầu mua hàng Merchandise'
     _inherit = ['mail.thread', 'mail.activity.mixin']
 
-    name = fields.Char(string='Mã yêu cầu', required=True, copy=False, readonly=True, index=True, default=lambda self: _('New'))
+    name = fields.Char(string='Mã yêu cầu', required=True, copy=False, readonly=True, index=True, default=lambda self: _('Mới'))
     
     state = fields.Selection([
         ('draft', 'Nháp'),
@@ -25,6 +61,7 @@ class MerPurchaseRequest(models.Model):
         ('to_approve', 'Chờ Quản lý duyệt'),
         ('approved', 'Được phê duyệt'),
         ('po_created', 'Đã tạo PO'),
+        ('done', 'Hoàn tất'),
         ('rejected', 'Từ chối'),
         ('cancel', 'Hủy')
     ], string='Trạng thái', default='draft', tracking=True)
@@ -32,35 +69,120 @@ class MerPurchaseRequest(models.Model):
     user_id = fields.Many2one('res.users', string='Người tạo', default=lambda self: self.env.user, tracking=True)
     manager_id = fields.Many2one('res.users', string='Người phê duyệt', tracking=True)
     partner_id = fields.Many2one('res.partner', string='Kho tổng / Nhà cung cấp', required=True)
+    company_partner_id = fields.Many2one('res.partner', compute='_compute_company_partner_id', readonly=True)
     warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
     date_request = fields.Date(string='Ngày yêu cầu', default=fields.Date.today)
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')
     
-    purchase_id = fields.Many2one('purchase.order', string='Đơn mua hàng (PO)', readonly=True)
+    amount_total = fields.Float(string='Tổng tiền dự kiến', compute='_compute_amount_total', store=True)
+    payment_term_id = fields.Many2one('account.payment.term', string='Điều khoản thanh toán')
+
+    @api.depends('line_ids.price_subtotal')
+    def _compute_amount_total(self):
+        for request in self:
+            request.amount_total = sum(line.price_subtotal for line in request.line_ids)
+    
+    purchase_order_count = fields.Integer(
+        string='Số PO',
+        compute='_compute_purchase_order_count',
+        search='_search_purchase_order_count',
+    )
+
+    @api.model
+    def _get_purchase_order_count_map(self):
+        grouped_data = self.env['purchase.order'].sudo().read_group(
+            [('origin', '!=', False)],
+            ['origin'],
+            ['origin'],
+            lazy=False,
+        )
+        return {
+            data['origin']: data.get('origin_count', data.get('__count', 0))
+            for data in grouped_data
+            if data.get('origin')
+        }
+
+    def _compute_purchase_order_count(self):
+        count_map = self._get_purchase_order_count_map()
+        for req in self:
+            req.purchase_order_count = count_map.get(req.name, 0)
+
+    @api.model
+    def _search_purchase_order_count(self, operator, value):
+        comparator = COUNT_COMPARISON_OPERATORS.get(operator)
+        if comparator is None:
+            raise UserError(_("Toán tử %s không được hỗ trợ cho bộ lọc số PO.") % operator)
+
+        try:
+            target_value = int(value)
+        except (TypeError, ValueError) as exc:
+            raise UserError(_("Giá trị lọc số PO không hợp lệ: %s") % value) from exc
+
+        count_map = self._get_purchase_order_count_map()
+        matching_ids = [
+            request.id
+            for request in self.search([])
+            if comparator(count_map.get(request.name, 0), target_value)
+        ]
+        return [('id', 'in', matching_ids)]
+
+    def action_view_purchase_orders(self):
+        self.ensure_one()
+        po_ids = self.env['purchase.order'].sudo().search([('origin', '=', self.name)]).ids
+        return {
+            'name': _('Các Đơn mua hàng (PO)'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'purchase.order',
+            'views': [[False, 'list'], [False, 'form']],
+            'domain': [('id', 'in', po_ids)],
+            'target': 'current',
+        }
     notes = fields.Text(string='Ghi chú')
 
     # Sinh mã PR theo sequence khi tạo mới
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
-            if vals.get('name', _('New')) == _('New'):
-                vals['name'] = self.env['ir.sequence'].next_by_code('mer.purchase.request') or _('New')
+            if vals.get('name', _('Mới')) in (_('Mới'), _('New')):
+                vals['name'] = self.env['ir.sequence'].next_by_code('mer.purchase.request') or _('Mới')
         return super(MerPurchaseRequest, self).create(vals_list)
+
+    @api.depends('warehouse_id')
+    def _compute_company_partner_id(self):
+        for request in self:
+            company = request.warehouse_id.company_id or self.env.company
+            request.company_partner_id = company.partner_id
+
+    def _get_tagged_supplier_partners(self, product):
+        supplier_category = self.env['res.partner.category'].search([('name', '=', 'NCC')], limit=1)
+        partners = product.seller_ids.mapped('partner_id')
+        if supplier_category:
+            return partners.filtered(lambda partner: supplier_category in partner.category_id)
+        return self.env['res.partner']
 
     # Gợi ý NCC/Kho tổng dựa trên sản phẩm đầu tiên
     @api.onchange('line_ids')
     def _onchange_line_ids(self):
-        if self.line_ids and not self.partner_id:
+        domain = []
+        if self.line_ids:
             first_product = self.line_ids[0].product_id
-            if first_product:
-                if first_product.x_mer_supply_route == 'supplier_direct':
-                    seller = first_product.seller_ids[:1]
-                    if seller:
-                        self.partner_id = seller.partner_id.id
-                else:
-                    # Giao từ Kho tổng mặc định lấy theo Công ty
-                    self.partner_id = self.env.company.partner_id.id
+            if first_product and first_product.x_mer_supply_route == 'supplier_direct':
+                domain = [('category_id.name', '=', 'NCC')]
+                suppliers = self._get_tagged_supplier_partners(first_product)
+                if not self.partner_id or self.partner_id not in suppliers:
+                    self.partner_id = suppliers[:1].id or False
+            else:
+                company_partner = self.company_partner_id or self.env.company.partner_id
+                domain = [('id', '=', company_partner.id)] if company_partner else []
+                self.partner_id = company_partner
+        return {'domain': {'partner_id': domain}}
+
+    # Cập nhật giá sản phẩm khi đổi NCC
+    @api.onchange('partner_id')
+    def _onchange_partner_id_prices(self):
+        for line in self.line_ids:
+            line._onchange_product_id_price()
 
     # Gửi yêu cầu mua hàng
     def action_submit(self):
@@ -71,6 +193,9 @@ class MerPurchaseRequest(models.Model):
 
     # Gửi lên Quản lý duyệt
     def action_send_to_manager(self):
+        for request in self:
+            if not request.payment_term_id:
+                raise UserError(_("Vui lòng chọn Điều khoản thanh toán trước khi trình Quản lý!"))
         self.write({'state': 'to_approve'})
 
     # Phê duyệt yêu cầu
@@ -89,6 +214,10 @@ class MerPurchaseRequest(models.Model):
     def action_cancel(self):
         self.write({'state': 'cancel'})
 
+    # Hoàn tất yêu cầu
+    def action_done(self):
+        self.write({'state': 'done'})
+
     # Tạo PO từ yêu cầu đã duyệt
     def action_create_po(self):
         if self.state != 'approved':
@@ -97,23 +226,40 @@ class MerPurchaseRequest(models.Model):
         if not self.partner_id:
             raise UserError(_("Vui lòng chọn Nhà cung cấp trước khi tạo PO."))
 
+        # Lọc các dòng hợp lệ (Sản phẩm không bị dừng đặt hàng)
+        stopped_lines = self.line_ids.filtered(lambda l: l.product_id.x_mer_stop_ordering)
+        valid_lines = self.line_ids - stopped_lines
+        
+        if not valid_lines:
+            self.action_cancel()
+            msg = _("Tất cả sản phẩm trong yêu cầu đều đang dừng đặt hàng. Hệ thống đã tự động hủy yêu cầu này.")
+            self.message_post(body=msg)
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': _('Yêu cầu bị hủy'),
+                    'message': msg,
+                    'sticky': True,
+                    'type': 'danger',
+                }
+            }
+
         purchase_vals = {
             'partner_id': self.partner_id.id,
             'origin': self.name,
             'date_order': fields.Datetime.now(),
+            'payment_term_id': self.payment_term_id.id,
             'order_line': [],
         }
         
-        for line in self.line_ids:
-            if line.product_id.x_mer_stop_ordering:
-                raise UserError(_("Sản phẩm %s đang trong trạng thái dừng đặt hàng.") % line.product_id.name)
-                
+        for line in valid_lines:
             purchase_vals['order_line'].append((0, 0, {
                 'product_id': line.product_id.id,
                 'name': line.product_id.name,
                 'product_qty': line.product_qty,
                 'product_uom_id': line.product_uom_id.id,
-                'price_unit': line.product_id.standard_price,
+                'price_unit': line.price_unit,
                 'date_planned': fields.Datetime.now(),
             }))
             
@@ -121,7 +267,11 @@ class MerPurchaseRequest(models.Model):
         # Tự động xác nhận đơn hàng (Confirm Order)
         purchase_id.button_confirm()
         
-        self.write({'purchase_id': purchase_id.id, 'state': 'po_created'})
+        self.write({'state': 'done'})
+        
+        if stopped_lines:
+            stopped_names = ", ".join(stopped_lines.mapped('product_id.name'))
+            self.message_post(body=_("Lưu ý: Các sản phẩm sau đã bị bỏ qua do đang dừng đặt hàng: %s") % stopped_names)
 
         # Gửi thông báo Chatter cho bộ phận Kho
         if self.partner_id:
@@ -155,10 +305,4 @@ class MerPurchaseRequest(models.Model):
                 subtype_xmlid='mail.mt_comment',
                 partner_ids=[self.partner_id.id]
             )
-        return {
-            'type': 'ir.actions.act_window',
-            'res_model': 'purchase.order',
-            'res_id': purchase_id.id,
-            'view_mode': 'form',
-            'target': 'current',
-        }
+        return self.action_view_purchase_orders()

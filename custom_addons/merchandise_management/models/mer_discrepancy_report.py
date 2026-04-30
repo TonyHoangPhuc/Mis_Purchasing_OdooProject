@@ -7,7 +7,7 @@ class MerDiscrepancyReport(models.Model):
     _description = 'Báo cáo sai lệch hàng hóa'
     _inherit = ['mail.thread', 'mail.activity.mixin']
 
-    name = fields.Char(string='Mã báo cáo', required=True, copy=False, readonly=True, index=True, default=lambda self: _('New'))
+    name = fields.Char(string='Mã báo cáo', required=True, copy=False, readonly=True, index=True, default=lambda self: _('Mới'))
     
     state = fields.Selection([
         ('draft', 'Mới'),
@@ -41,8 +41,8 @@ class MerDiscrepancyReport(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
-            if vals.get('name', _('New')) == _('New'):
-                vals['name'] = self.env['ir.sequence'].next_by_code('mer.discrepancy.report') or _('New')
+            if vals.get('name', _('Mới')) in (_('Mới'), _('New')):
+                vals['name'] = self.env['ir.sequence'].next_by_code('mer.discrepancy.report') or _('Mới')
         return super(MerDiscrepancyReport, self).create(vals_list)
 
     warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
@@ -101,7 +101,7 @@ class MerDiscrepancyReport(models.Model):
             raise UserError(_("Bạn chỉ có thể tạo PO bù hàng khi báo cáo đang ở trạng thái Nháp."))
         
         if not self.purchase_id:
-            raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (Source PO) trước khi tạo PO bù hàng."))
+            raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (PO nguồn) trước khi tạo PO bù hàng."))
 
         if self.reason != 'shortage':
             raise UserError(_("Lý do hiện tại là %s. Chỉ có thể tạo PO bù hàng cho trường hợp Hàng thiếu.") % dict(self._fields['reason'].selection).get(self.reason))
@@ -193,7 +193,7 @@ class MerDiscrepancyReport(models.Model):
             raise UserError(_("Bạn chỉ có thể tạo Phiếu thu hồi khi báo cáo đang ở trạng thái Nháp."))
         
         if not self.purchase_id:
-            raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (Source PO) trước khi tạo phiếu thu hồi."))
+            raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (PO nguồn) trước khi tạo phiếu thu hồi."))
 
         if self.reason != 'overage':
             raise UserError(_("Lý do hiện tại là %s. Chỉ có thể tạo Phiếu thu hồi cho trường hợp Hàng dư.") % dict(self._fields['reason'].selection).get(self.reason))
@@ -315,4 +315,3 @@ class MerDiscrepancyReport(models.Model):
             'view_mode': 'form',
             'target': 'current',
         }
-

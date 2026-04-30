@@ -7,8 +7,8 @@
         <field name="arch" type="xml">
             <form string="Báo cáo sai lệch hàng hóa">
                 <header>
-                    <button name="action_create_replenishment_po" string="Tạo PO bù hàng" type="object" class="btn-primary" invisible="reason != 'shortage' or replenishment_po_id != False or state != 'draft'"/>
-                    <button name="action_create_return_picking" string="Tạo phiếu thu hồi" type="object" class="btn-primary" invisible="reason != 'overage' or return_picking_id != False or state != 'draft'"/>
+                    <button name="action_create_replenishment_po" string="Tạo PO bù hàng" type="object" class="btn-primary" invisible="reason != 'shortage' or replenishment_po_id or state != 'draft'"/>
+                    <button name="action_create_return_picking" string="Tạo phiếu thu hồi" type="object" class="btn-primary" invisible="reason != 'overage' or return_picking_id or state != 'draft'"/>
                     <field name="state" widget="statusbar" statusbar_visible="draft,done"/>
                 </header>
                 <sheet>
@@ -56,8 +56,8 @@
         <field name="name">mer.discrepancy.report.list</field>
         <field name="model">mer.discrepancy.report</field>
         <field name="arch" type="xml">
-            <list string="Báo cáo sai lệch hàng hóa">
-                <field name="name" string="Mã báo cáo"/>
+            <list string="Báo cáo sai lệch hàng hóa" sample="1">
+                <field name="name" string="Mã báo cáo" decoration-bf="1"/>
                 <field name="date_discrepancy" string="Ngày ghi nhận"/>
                 <field name="warehouse_id" string="Cửa hàng"/>
                 <field name="product_id" string="Sản phẩm"/>
@@ -77,5 +77,20 @@
                 Ghi nhận các trường hợp sai lệch hàng hóa.
             </p>
         </field>
+    </record>
+    <record id="action_mer_discrepancy_report_shortage" model="ir.actions.act_window">
+        <field name="name">Bao cao thieu hang</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'shortage')]</field>
+        <field name="context">{'default_reason': 'shortage'}</field>
+    </record>
+
+    <record id="action_mer_discrepancy_report_overage" model="ir.actions.act_window">
+        <field name="name">Bao cao nhan du hang</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'overage')]</field>
+        <field name="context">{'default_reason': 'overage'}</field>
     </record>
 </odoo>

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
     <record id="module_merchandise_management_category" model="ir.module.category">
-        <field name="name">Merchandise Management</field>
+        <field name="name">Quản lý Merchandise</field>
         <field name="description">Quản lý nghiệp vụ Merchandise</field>
         <field name="sequence">100</field>
     </record>
 
     <!-- Odoo 19 Security: Add Privilege layer -->
     <record id="module_merchandise_management_privilege" model="res.groups.privilege">
-        <field name="name">Merchandise</field>
+        <field name="name">Bộ phận Merchandise</field>
         <field name="category_id" ref="module_merchandise_management_category"/>
     </record>
 

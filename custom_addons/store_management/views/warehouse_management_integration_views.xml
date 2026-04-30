@@ -1,0 +1,598 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="warehouse_management.menu_warehouse_root" model="ir.ui.menu">
+        <field name="name">Kho tổng</field>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <menuitem
+        id="menu_warehouse_check_requests"
+        name="Đơn cần kiểm hàng"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="5"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <record id="view_mer_purchase_request_line_search_warehouse" model="ir.ui.view">
+        <field name="name">mer.purchase.request.line.search.warehouse</field>
+        <field name="model">mer.purchase.request.line</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="product_id"/>
+                <field name="request_id"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="warehouse_management.action_receiving_qc" model="ir.actions.act_window">
+        <field name="name">NCC -&gt; Kho tổng</field>
+        <field name="res_model" >stock.picking</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_receiving_qc_kanban"/>
+        <field name="search_view_id" ref="warehouse_management.view_receiving_qc_search"/>
+        <field name="domain">[('picking_type_id.warehouse_id.mis_role', '=', 'central'), ('picking_type_code', '=', 'incoming')]</field>
+        <field name="context">{}</field>
+    </record>
+
+    <record id="warehouse_management.menu_receiving_qc" model="ir.ui.menu">
+        <field name="name">NCC -&gt; Kho tổng</field>
+        <field name="parent_id" ref="store_management.menu_warehouse_check_requests"/>
+        <field name="sequence" eval="10"/>
+        <field name="action" ref="warehouse_management.action_receiving_qc"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+
+
+    <menuitem
+        id="menu_warehouse_pending_deliveries"
+        name="Đơn cần giao"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="15"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_warehouse_completed_deliveries"
+        name="Đơn đã giao"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="20"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_warehouse_stock_management"
+        name="Quản lý kho hàng"
+        parent="warehouse_management.menu_warehouse_root"
+        sequence="40"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <record id="stock.menu_stock_warehouse_mgmt" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_inventory_control" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_warehouse_report" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_user')])]"/>
+    </record>
+
+    <record id="stock.menu_stock_config_settings" model="ir.ui.menu">
+        <field name="parent_id" ref="store_management.menu_warehouse_stock_management"/>
+        <field name="group_ids" eval="[(6, 0, [ref('warehouse_management.group_receiving_qc_manager')])]"/>
+    </record>
+
+    <record id="view_picking_form_inherit_discrepancy" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.discrepancy</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <!-- 1. Nút GIAO HÀNG: Chỉ hiện ở KHO TỔNG khi XUẤT HÀNG đi Cửa hàng -->
+                <button name="action_start_store_delivery"
+                        string="Tiến hành giao hàng đến cửa hàng"
+                        type="object"
+                        class="btn-primary"
+                        invisible="not is_central_picking or picking_type_code != 'outgoing' or store_route_type != 'central_to_store' or state in ('done', 'cancel')"
+                        groups="warehouse_management.group_receiving_qc_user"/>
+
+                <!-- 2. Nút KIỂM HÀNG THỰC TẾ: Chỉ hiện ở CỬA HÀNG khi NHẬN HÀNG về -->
+                <button name="%(store_management.action_mer_delivery_discrepancy_wizard)d" 
+                        string="Kiểm hàng thực tế" 
+                        type="action" 
+                        invisible="not is_store_picking or picking_type_code != 'incoming' or store_route_type != 'central_to_store' or state in ('done', 'cancel')"
+                        groups="store_management.group_store_user,warehouse_management.group_receiving_qc_user"
+                        context="{'default_picking_id': id}"/>
+
+                <!-- 3. Nút XEM BÁO CÁO DƯ: Chỉ hiện sau khi đã xong -->
+                <button name="%(store_management.action_mer_excess_receipt)d" 
+                        string="Xem báo cáo dư hàng" 
+                        type="action" 
+                        invisible="state != 'done' or not is_store_picking or picking_type_code != 'incoming' or store_route_type != 'central_to_store'"
+                        groups="store_management.group_store_user"
+                        context="{'default_picking_id': id, 'search_default_picking_id': id}"/>
+            </xpath>
+
+            <!-- 4. Ẩn/Hiện nút XÁC NHẬN (Validate) -->
+            <xpath expr="//button[@name='button_validate'][1]" position="attributes">
+                <attribute name="invisible">is_store_picking and picking_type_code == 'incoming' and store_route_type == 'central_to_store' and wm_qc_status != 'done' or (is_central_picking and picking_type_code == 'outgoing' and store_route_type == 'central_to_store') or state in ('draft', 'confirmed', 'done', 'cancel')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='button_validate'][2]" position="attributes">
+                <attribute name="invisible">is_store_picking and picking_type_code == 'incoming' and store_route_type == 'central_to_store' and wm_qc_status != 'done' or (is_central_picking and picking_type_code == 'outgoing' and store_route_type == 'central_to_store') or state in ('waiting', 'assigned', 'done', 'cancel')</attribute>
+            </xpath>
+
+            <!-- 5. Điều chỉnh các nút QC của module warehouse_management -->
+            <xpath expr="//button[@name='action_start_qc']" position="attributes">
+                <attribute name="invisible">not is_store_picking or store_route_type != 'central_to_store' or not store_actual_check_done or wm_qc_status != 'draft' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_qc_pass']" position="attributes">
+                <attribute name="invisible">not is_store_picking or store_route_type != 'central_to_store' or wm_qc_status != 'checking' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_qc_reject']" position="attributes">
+                <attribute name="invisible">not is_store_picking or store_route_type != 'central_to_store' or wm_qc_status != 'checking' or state == 'cancel'</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_receiving_qc_tree_inherit_store_context" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.tree.inherit.store.context</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_receiving_qc_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='name']" position="after">
+                <field name="store_receiving_store_id" optional="show"/>
+                <field name="store_route_label" optional="show"/>
+                <field name="mer_request_id" optional="show"/>
+                <field name="store_source_document_ref" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_receiving_qc_search_inherit_store_context" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.search.inherit.store.context</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_receiving_qc_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <filter name="route_supplier_to_central" string="NCC -&gt; Kho tổng" domain="[('store_route_type', '=', 'supplier_to_central')]"/>
+                <separator/>
+                <filter name="todo" string="Đơn chờ nhận hàng" domain="[('state', 'not in', ('done', 'cancel'))]"/>
+                <filter name="done" string="Đơn đã hoàn tất" domain="[('state', '=', 'done')]"/>
+                <searchpanel>
+                    <field name="wm_qc_status" icon="fa-check-square-o" enable_counters="1"/>
+                    <field name="store_receiving_store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </xpath>
+            <xpath expr="//group" position="inside">
+                <filter name="group_receiving_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
+                <filter name="group_route" string="Nguồn hàng" domain="[]" context="{'group_by': 'store_route_type'}"/>
+                <filter name="group_month" string="Tháng giao" domain="[]" context="{'group_by': 'scheduled_date:month'}"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_warehouse_receiving_qc_kanban" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.receiving.kanban</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <kanban class="o_kanban_mobile" sample="1" default_group_by="wm_qc_status" default_order="scheduled_date asc">
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <field name="store_source_document_ref"/>
+                <field name="wm_qc_status"/>
+                <field name="wm_expected_qty"/>
+                <field name="wm_damaged_qty"/>
+                <field name="wm_discrepancy_qty"/>
+                <field name="store_source_party_display"/>
+                <field name="scheduled_date"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click #{record.wm_qc_status.raw_value in ['done', 'passed'] ? 'border-success' : (record.wm_qc_status.raw_value == 'rejected' ? 'border-danger' : 'border-warning')}">
+                            <div class="o_kanban_record_top mb8">
+                                <div class="o_kanban_record_headings">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="partner_id" t-if="record.partner_id.raw_value"/>
+                                        <field name="store_source_party_display" t-else=""/>
+                                    </strong>
+                                    <div class="text-muted" t-if="record.store_receiving_store_id.value">
+                                        <i class="fa fa-building-o mr4" title="Cửa hàng nhận"/> <field name="store_receiving_store_id"/>
+                                    </div>
+                                </div>
+                                    <field name="wm_qc_status" widget="badge"
+                                    decoration-secondary="wm_qc_status == 'draft'"
+                                    decoration-warning="wm_qc_status == 'checking'"
+                                    decoration-success="wm_qc_status in ['done', 'passed']"
+                                    decoration-danger="wm_qc_status == 'rejected'"
+                                />
+                            </div>
+                            <div class="o_kanban_record_body">
+                                <div class="text-muted mb4">
+                                    <i class="fa fa-file-text-o mr4" title="Chứng từ nguồn"/> <field name="store_source_document_ref"/>
+                                </div>
+                                <div class="text-muted mb4" t-if="record.mer_request_id.value">
+                                    <i class="fa fa-link mr4" title="PR nguồn"/> <field name="mer_request_id"/>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <span>SL dự kiến: <field name="wm_expected_qty"/></span>
+                                    <span class="text-danger" t-if="record.wm_damaged_qty.raw_value &gt; 0">
+                                        Lỗi: <field name="wm_damaged_qty"/>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="o_kanban_record_bottom mt8">
+                                <div class="oe_kanban_bottom_left">
+                                    <span t-if="record.wm_discrepancy_qty.raw_value != 0">Lệch: <field name="wm_discrepancy_qty"/></span>
+                                </div>
+                                <div class="oe_kanban_bottom_right">
+                                    <field name="scheduled_date" widget="date"/>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="action_store_receipts_pending_kanban" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">kanban</field>
+        <field name="view_id" ref="store_management.view_warehouse_receiving_qc_kanban"/>
+        <field name="act_window_id" ref="store_management.action_store_receipts_pending"/>
+    </record>
+
+
+    <record id="view_warehouse_central_check_kanban" model="ir.ui.view">
+        <field name="name">mer.purchase.request.warehouse.central.check.kanban</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="central_flow_status" default_order="date_request desc" sample="1">
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="date_request"/>
+                <field name="pending_central_check_count"/>
+                <field name="waiting_delivery_count"/>
+                <field name="insufficient_stock_count"/>
+                <field name="internal_line_count"/>
+                <field name="central_flow_status"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click #{record.insufficient_stock_count.raw_value &gt; 0 ? 'border-danger' : (record.pending_central_check_count.raw_value &gt; 0 ? 'border-warning' : 'border-info')}"
+                             style="border-radius: 16px; overflow: hidden;">
+                            <div t-attf-style="height: 4px; background: #{record.insufficient_stock_count.raw_value &gt; 0 ? '#ef4444' : (record.pending_central_check_count.raw_value &gt; 0 ? '#f59e0b' : '#3b82f6')};"/>
+                            <div class="p-3">
+                                <div class="d-flex align-items-start justify-content-between mb-2">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                    <span class="badge rounded-pill text-bg-light">
+                                        <field name="central_flow_status"/>
+                                    </span>
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-building-o mr-1" title="Cửa hàng"/> <field name="store_id"/>
+                                </div>
+                                <div class="mb-2 text-muted">
+                                    <i class="fa fa-calendar mr-1" title="Ngày yêu cầu"/> <field name="date_request" widget="date"/>
+                                </div>
+                                <div class="d-flex flex-wrap" style="gap: 6px;">
+                                    <span class="badge rounded-pill text-bg-light">Cần kiểm: <field name="pending_central_check_count"/></span>
+                                    <span class="badge rounded-pill text-bg-light">Chờ giao: <field name="waiting_delivery_count"/></span>
+                                    <span class="badge rounded-pill text-bg-light">Thiếu hàng: <field name="insufficient_stock_count"/></span>
+                                    <span class="badge rounded-pill text-bg-light">Tổng dòng: <field name="internal_line_count"/></span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="store_management.action_central_stock_requests" model="ir.actions.act_window">
+        <field name="name">Kho tổng -&gt; Cửa hàng</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_central_check_kanban"/>
+        <field name="search_view_id" ref="store_management.view_mer_purchase_request_search_central_check"/>
+        <field name="domain">['&amp;', ('state', '=', 'po_created'), '|', '|', ('pending_central_check_count', '&gt;', 0), ('ready_delivery_count', '&gt;', 0), ('waiting_delivery_count', '&gt;', 0)]</field>
+        <field name="context">{'central_check_menu': 1}</field>
+    </record>
+
+    <record id="menu_warehouse_central_check_requests" model="ir.ui.menu">
+        <field name="name">Kho tổng -> Cửa hàng</field>
+        <field name="parent_id" ref="store_management.menu_warehouse_check_requests"/>
+        <field name="sequence" eval="20"/>
+        <field name="action" ref="store_management.action_central_stock_requests"/>
+    </record>
+
+
+
+    <record id="view_warehouse_delivery_tree" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.delivery.tree</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <list default_order="scheduled_date asc">
+                <field name="name"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id" optional="show"/>
+                <field name="store_source_document_ref" optional="show"/>
+                <field name="scheduled_date"/>
+                <field name="wm_expected_qty"/>
+                <field name="wm_qc_status"/>
+                <field name="state"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_warehouse_delivery_search" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.delivery.search</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <field name="store_source_document_ref"/>
+                <filter name="waiting" string="Chờ xử lý" domain="[('state', 'in', ['draft', 'waiting', 'confirmed'])]"/>
+                <filter name="ready" string="Sẵn sàng giao" domain="[('state', '=', 'assigned')]"/>
+                <filter name="done" string="Đã giao" domain="[('state', '=', 'done')]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_receiving_store_id'}"/>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_month" string="Tháng giao" domain="[]" context="{'group_by': 'scheduled_date:month'}"/>
+                </group>
+                <searchpanel>
+                    <field name="store_receiving_store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="state" icon="fa-tasks" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_warehouse_delivery_kanban" model="ir.ui.view">
+        <field name="name">stock.picking.warehouse.delivery.kanban</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <kanban class="o_kanban_mobile" sample="1" default_order="scheduled_date asc">
+                <field name="name"/>
+                <field name="store_receiving_store_id"/>
+                <field name="mer_request_id"/>
+                <field name="store_source_document_ref"/>
+                <field name="scheduled_date"/>
+                <field name="wm_expected_qty"/>
+                <field name="state"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click
+                            #{ record.state.raw_value == 'done' ? 'border-success' : '' }
+                            #{ record.state.raw_value == 'assigned' ? 'border-primary' : '' }
+                            #{ record.state.raw_value in ['draft', 'waiting', 'confirmed'] ? 'border-warning' : '' }"
+                             style="border-radius: 16px; overflow: hidden;">
+                            <div t-attf-style="height: 4px; background: #{record.state.raw_value == 'done' ? '#10b981' : record.state.raw_value == 'assigned' ? '#3b82f6' : '#f59e0b'};"/>
+                            <div class="p-3">
+                                <div class="d-flex align-items-start justify-content-between mb-2">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                    <field name="state" widget="badge"
+                                        decoration-secondary="state == 'draft'"
+                                        decoration-warning="state == 'waiting' or state == 'confirmed'"
+                                        decoration-primary="state == 'assigned'"
+                                        decoration-success="state == 'done'"
+                                    />
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-building-o mr-1" title="Cửa hàng"/> <field name="store_receiving_store_id"/>
+                                </div>
+                                <div class="mb-1 text-muted" t-if="record.mer_request_id.value">
+                                    <i class="fa fa-link mr-1" title="PR nguồn"/> <field name="mer_request_id"/>
+                                </div>
+                                <div class="mb-2 text-muted">
+                                    <i class="fa fa-file-text-o mr-1" title="Chứng từ nguồn"/> <field name="store_source_document_ref"/>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <span>SL giao: <field name="wm_expected_qty"/></span>
+                                    <span><field name="scheduled_date" widget="date"/></span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="action_warehouse_pending_deliveries" model="ir.actions.act_window">
+        <field name="name">Đơn cần giao</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_delivery_kanban"/>
+        <field name="search_view_id" ref="store_management.view_warehouse_delivery_search"/>
+        <field name="domain">[('store_show_in_pending_delivery', '=', True)]</field>
+        <field name="context">{}</field>
+    </record>
+
+    <record id="menu_warehouse_pending_deliveries" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_warehouse_pending_deliveries"/>
+    </record>
+
+    <record id="action_warehouse_completed_deliveries" model="ir.actions.act_window">
+        <field name="name">Đơn đã giao</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="store_management.view_warehouse_delivery_kanban"/>
+        <field name="search_view_id" ref="store_management.view_warehouse_delivery_search"/>
+        <field name="domain">[('store_show_in_completed_delivery', '=', True)]</field>
+        <field name="context">{'search_default_done': 1}</field>
+    </record>
+
+    <record id="menu_warehouse_completed_deliveries" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_warehouse_completed_deliveries"/>
+    </record>
+    <record id="view_picking_form_inherit_store_discrepancy_actions" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.store.discrepancy.actions</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="store_management.view_picking_form_inherit_discrepancy"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='%(store_management.action_mer_delivery_discrepancy_wizard)d']" position="attributes">
+                <attribute name="string">Kiểm hàng thực tế</attribute>
+                <attribute name="invisible">state in ('done', 'cancel') or picking_type_code not in ('internal', 'incoming')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='%(store_management.action_mer_excess_receipt)d']" position="replace">
+                <button name="action_view_store_discrepancy_reports"
+                        string="Xem báo cáo sai lệch"
+                        type="object"
+                        invisible="picking_type_code not in ('internal', 'incoming')"
+                        groups="store_management.group_store_user"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_picking_form_inherit_store_receipt_flow" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.store.receipt.flow</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="warehouse_management.view_picking_form_inherit_warehouse_management"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='do_print_picking']" position="attributes">
+                <attribute name="invisible">wm_is_incoming_receipt or state != 'assigned'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='%(stock.action_report_delivery)d']" position="attributes">
+                <attribute name="invisible">wm_is_incoming_receipt or state != 'done'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_cancel']" position="attributes">
+                <attribute name="invisible">wm_is_incoming_receipt or state not in ('assigned', 'confirmed', 'draft', 'waiting')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_start_qc']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or (store_route_type == 'supplier_to_store' and not store_receipt_can_start_qc) or wm_qc_status != 'draft' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_qc_pass']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or wm_qc_status != 'checking' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_qc_reject']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or wm_qc_status != 'checking' or state == 'cancel'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='wm_qc_status'][@widget='statusbar']" position="attributes">
+                <attribute name="statusbar_visible">draft,checking,rejected,done</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_picking_form_inherit_store_receipt_only_actual_button" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.store.receipt.only.actual.button</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="store_management.view_picking_form_inherit_store_discrepancy_actions"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='action_view_store_discrepancy_reports']" position="attributes">
+                <attribute name="invisible">True</attribute>
+            </xpath>
+            <xpath expr="//button[@name='%(store_management.action_mer_delivery_discrepancy_wizard)d']" position="attributes">
+                <attribute name="invisible">not wm_is_incoming_receipt or state in ('done', 'cancel')</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_warehouse_form_inherit_store_management" model="ir.ui.view">
+        <field name="name">stock.warehouse.form.inherit.store.management</field>
+        <field name="model">stock.warehouse</field>
+        <field name="inherit_id" ref="stock.view_warehouse"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='code']" position="after">
+                <field name="mis_role" string="Vai trò" widget="radio" options="{'horizontal': true}"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_discrepancy_report_form_inherit_store" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.form.inherit.store</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_discrepancy_report_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_submit"
+                        string="Gửi Merchandise"
+                        type="object"
+                        class="btn-primary"
+                        invisible="state != 'draft' or submitted_to_merchandise"/>
+                <field name="submitted_to_merchandise" invisible="1"/>
+            </xpath>
+            <xpath expr="//button[@name='action_create_replenishment_po']" position="attributes">
+                <attribute name="invisible">reason != 'shortage' or replenishment_po_id or state != 'draft' or not purchase_id</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_create_return_picking']" position="attributes">
+                <attribute name="invisible">reason != 'overage' or return_picking_id or state != 'draft' or not purchase_id</attribute>
+            </xpath>
+            <xpath expr="//field[@name='purchase_id']" position="before">
+                <field name="picking_id"/>
+                <field name="mer_request_id" readonly="1"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_discrepancy_report_tree_inherit_store" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.tree.inherit.store</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_discrepancy_report_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='date_discrepancy']" position="after">
+                <field name="picking_id" optional="show"/>
+                <field name="mer_request_id" optional="show"/>
+                <field name="submitted_to_merchandise" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_store_discrepancy_report_overage" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận dư hàng</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'overage'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="context">{'default_reason': 'overage'}</field>
+    </record>
+
+    <record id="action_store_discrepancy_report_shortage" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận thiếu hàng</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'shortage'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="context">{'default_reason': 'shortage'}</field>
+    </record>
+
+    <record id="menu_mer_excess_receipt" model="ir.ui.menu">
+        <field name="action" ref="store_management.action_store_discrepancy_report_overage"/>
+    </record>
+
+    <menuitem id="menu_store_discrepancy_shortage"
+              name="Báo cáo nhận thiếu hàng"
+              parent="store_management.menu_store_receipts_pending"
+              action="store_management.action_store_discrepancy_report_shortage"
+              sequence="25"
+              groups="store_management.group_store_user"/>
+    <record id="view_mer_purchase_request_line_tree_warehouse" model="ir.ui.view">
+        <field name="name">mer.purchase.request.line.tree.warehouse</field>
+        <field name="model">mer.purchase.request.line</field>
+        <field name="arch" type="xml">
+            <list string="Kiểm hàng" create="false" edit="false">
+                <field name="request_id"/>
+                <field name="product_id"/>
+                <field name="approved_qty" string="SL cần soạn"/>
+                <field name="source_available_qty" string="Tồn khả dụng"/>
+                <field name="internal_flow_state" widget="badge" decoration-info="internal_flow_state == 'pending_check'" decoration-success="internal_flow_state == 'ready_delivery'"/>
+                <button name="action_confirm_central_stock" string="Kiểm hàng" type="object" class="btn-primary" invisible="internal_flow_state != 'pending_check'"/>
+                <button name="action_confirm_central_stock_ready" string="Xác nhận đủ hàng" type="object" class="btn-success" invisible="internal_flow_state != 'ready_delivery'"/>
+            </list>
+        </field>
+    </record>
+</odoo>

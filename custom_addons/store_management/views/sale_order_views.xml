@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sale_order_form_inherit_store" model="ir.ui.view">
+        <field name="name">sale.order.form.inherit.store</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="store_id"/>
+                <field name="warehouse_id" invisible="1"/>
+                <field name="store_stock_location_id" invisible="1"/>
+                <field name="x_available_product_ids" invisible="1"/>
+            </xpath>
+            <xpath expr="//field[@name='order_line']//field[@name='product_id']" position="attributes">
+                <attribute name="domain">[('id', 'in', parent.x_available_product_ids)]</attribute>
+                <attribute name="context">{'store_sale_stock_only': True, 'store_id': parent.store_id, 'default_store_id': parent.store_id, 'warehouse': parent.warehouse_id, 'warehouse_id': parent.warehouse_id, 'location': parent.store_stock_location_id, 'default_warehouse_id': parent.warehouse_id}</attribute>
+                <attribute name="options">{'no_create': True, 'no_create_edit': True}</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_store_sale_order_tree" model="ir.ui.view">
+        <field name="name">sale.order.tree.store</field>
+        <field name="model">sale.order</field>
+        <field name="arch" type="xml">
+            <list default_order="date_order desc" sample="1">
+                <field name="name" decoration-bf="1"/>
+                <field name="date_order" widget="date"/>
+                <field name="partner_id"/>
+                <field name="store_id"/>
+                <field name="warehouse_id" optional="hide"/>
+                <field name="user_id" widget="many2one_avatar_user"/>
+                <field name="amount_total" sum="Tổng doanh thu" widget="monetary"/>
+                <field name="state" widget="badge" decoration-success="state == 'sale'" decoration-info="state == 'draft'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_store_sale_order_search" model="ir.ui.view">
+        <field name="name">sale.order.search.store</field>
+        <field name="model">sale.order</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <filter name="draft_orders" string="Nháp" domain="[('state', '=', 'draft')]"/>
+                <filter name="confirmed_orders" string="Đã xác nhận" domain="[('state', '=', 'sale')]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_salesperson" string="Nhân viên bán" domain="[]" context="{'group_by': 'user_id'}"/>
+                    <filter name="group_status" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_store_sales_orders" model="ir.actions.act_window">
+        <field name="name">Bán hàng</field>
+        <field name="res_model">sale.order</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_store_sale_order_tree"/>
+        <field name="search_view_id" ref="view_store_sale_order_search"/>
+        <field name="domain">[('store_id', '!=', False)]</field>
+    </record>
+</odoo>

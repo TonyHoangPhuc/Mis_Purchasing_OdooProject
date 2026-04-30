@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_store_product_line_tree" model="ir.ui.view">
+        <field name="name">store.product.line.tree</field>
+        <field name="model">store.product.line</field>
+        <field name="arch" type="xml">
+            <list default_order="store_id, product_id" editable="bottom" sample="1">
+                <field name="store_id" readonly="1" optional="show" decoration-bf="1"/>
+                <field name="warehouse_id" readonly="1" optional="hide"/>
+                <field name="product_id" readonly="1" decoration-bf="1"/>
+                <field name="categ_id" readonly="1" optional="hide"/>
+                <field name="min_qty"/>
+                <field name="max_qty"/>
+                <field name="current_qty" readonly="1" widget="progressbar" options="{'current_value': 'current_qty', 'max_value': 'max_qty'}"/>
+                <field name="available_qty" readonly="1" optional="show"/>
+                <field name="pending_replenishment_qty" readonly="1" optional="show"/>
+                <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
+                <button
+                    name="action_create_replenishment_pr"
+                    type="object"
+                    string="Tạo PR"
+                    icon="fa-shopping-cart"
+                    class="btn btn-sm btn-primary"
+                    invisible="suggested_replenishment_qty &lt;= 0"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_store_product_line_form" model="ir.ui.view">
+        <field name="name">store.product.line.form</field>
+        <field name="model">store.product.line</field>
+        <field name="arch" type="xml">
+            <form string="Định mức sản phẩm của cửa hàng">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="store_id"/>
+                            <field name="warehouse_id" readonly="1"/>
+                            <field name="product_id"/>
+                            <field name="categ_id" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="min_qty"/>
+                            <field name="max_qty"/>
+                            <field name="current_qty" readonly="1"/>
+                            <field name="available_qty" readonly="1"/>
+                            <field name="pending_replenishment_qty" readonly="1"/>
+                            <field name="suggested_replenishment_qty" readonly="1"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_store_product_line_search" model="ir.ui.view">
+        <field name="name">store.product.line.search</field>
+        <field name="model">store.product.line</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="product_id"/>
+                <field name="categ_id"/>
+                <filter name="needs_replenishment" string="Cần bổ sung hàng" domain="[('needs_replenishment', '=', True)]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_product" string="Sản phẩm" domain="[]" context="{'group_by': 'product_id'}"/>
+                    <filter name="group_category" string="Ngành hàng" domain="[]" context="{'group_by': 'categ_id'}"/>
+                </group>
+                <searchpanel>
+                    <field name="store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="categ_id" icon="fa-tags" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_store_product_lines" model="ir.actions.act_window">
+        <field name="name">Tồn kho và định mức theo cửa hàng</field>
+        <field name="res_model">store.product.line</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_store_product_line_search"/>
+        <field name="context">{}</field>
+    </record>
+</odoo>
