@@ -14,6 +14,8 @@
                             <field name="product_id" readonly="1" force_save="1" decoration-bf="1"/>
                             <field name="expected_qty" readonly="1" force_save="1"/>
                             <field name="actual_qty"/>
+                            <field name="damaged_qty"/>
+                            <field name="damage_note" invisible="damaged_qty &lt;= 0" required="damaged_qty &gt; 0"/>
                         </list>
                     </field>
                 </sheet>

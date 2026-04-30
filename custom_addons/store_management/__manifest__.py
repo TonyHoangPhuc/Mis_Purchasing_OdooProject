@@ -18,6 +18,7 @@
         "data/mer_excess_receipt_data.xml",
         "security/store_security.xml",
         "security/ir.model.access.csv",
+        "security/ir_rule.xml",
         "views/store_store_views.xml",
         "views/store_product_views.xml",
         "views/mer_purchase_request_views.xml",

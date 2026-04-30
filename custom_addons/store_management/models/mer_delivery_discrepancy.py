@@ -65,10 +65,97 @@ class MerExcessReceipt(models.Model):
         "stock.picking", string="Phiếu thu hồi", readonly=True
     )
 
+    source_route_type = fields.Selection(
+        related="picking_id.store_route_type",
+        string="Nguồn phát sinh",
+        store=True,
+        readonly=True,
+    )
+    source_route_label = fields.Char(
+        related="picking_id.store_route_label",
+        string="Luồng hàng",
+        store=True,
+        readonly=True,
+    )
+    source_location_id = fields.Many2one(
+        "stock.location",
+        string="Nguồn trừ tồn",
+        readonly=True,
+        copy=False,
+    )
+    holding_location_id = fields.Many2one(
+        "stock.location",
+        string="Vị trí hàng dư chờ thu hồi",
+        readonly=True,
+        copy=False,
+    )
+    central_stock_adjusted = fields.Boolean(
+        string="Đã cập nhật tồn Kho tổng",
+        readonly=True,
+        copy=False,
+    )
+    handling_status = fields.Char(
+        string="Tình trạng xử lý",
+        compute="_compute_handling_status",
+    )
+
     @api.depends("expected_qty", "actual_qty")
     def _compute_discrepancy_qty(self):
         for rec in self:
             rec.discrepancy_qty = max(0.0, rec.actual_qty - rec.expected_qty)
+
+    @api.depends("state", "central_stock_adjusted", "recovery_picking_id.state")
+    def _compute_handling_status(self):
+        for rec in self:
+            if rec.state == "done":
+                rec.handling_status = _("Đã thu hồi")
+            elif rec.recovery_picking_id:
+                rec.handling_status = _("Đang thu hồi")
+            elif rec.central_stock_adjusted:
+                rec.handling_status = _("Chờ Kho tổng thu hồi")
+            elif rec.state == "reported":
+                rec.handling_status = _("Chờ Merchandise duyệt")
+            else:
+                rec.handling_status = _("Chờ gửi")
+
+    def _is_central_to_store_excess(self):
+        self.ensure_one()
+        return bool(
+            self.picking_id
+            and self.picking_id.store_route_type == "central_to_store"
+            and self.picking_id._is_store_receipt_for_qc()
+        )
+
+    def _get_central_source_location(self):
+        self.ensure_one()
+        if self.source_location_id:
+            return self.source_location_id
+        if self._is_central_to_store_excess():
+            central_picking = self.picking_id._get_store_receipt_central_source_picking()
+            if central_picking:
+                return central_picking.location_id
+        return self.picking_id.location_id
+
+    def _get_holding_location(self):
+        self.ensure_one()
+        if self.holding_location_id:
+            return self.holding_location_id
+        if self._is_central_to_store_excess():
+            return self.picking_id._get_or_create_store_excess_holding_location()
+
+        parent_location = self.picking_id.location_dest_id
+        excess_location = self.env["stock.location"].search([
+            ("location_id", "=", parent_location.id),
+            ("name", "=", "Hàng nhận dư (Chờ trả)")
+        ], limit=1)
+
+        if not excess_location:
+            excess_location = self.env["stock.location"].create({
+                "name": "Hàng nhận dư (Chờ trả)",
+                "location_id": parent_location.id,
+                "usage": "internal",
+            })
+        return excess_location
 
     @api.onchange("picking_id", "product_id")
     def _onchange_picking_product(self):
@@ -93,6 +180,8 @@ class MerExcessReceipt(models.Model):
         self.ensure_one()
         if self.discrepancy_qty <= 0:
             raise UserError(_("Không có số lượng dư để báo cáo."))
+        if self._is_central_to_store_excess():
+            self._action_warehouse_adjust_logic()
         self.state = "reported"
         self.message_post(body=_("Đã gửi báo cáo nhận dư hàng đến đội Merchandise."))
 
@@ -113,32 +202,27 @@ class MerExcessReceipt(models.Model):
         for rec in self:
             if rec.discrepancy_qty <= 0:
                 continue
+            if rec.central_stock_adjusted:
+                continue
 
-            # 1. Tìm hoặc tạo địa điểm "Nhận dư (Chờ trả)" tại Cửa hàng
-            parent_location = rec.picking_id.location_dest_id
-            excess_location = self.env["stock.location"].search([
-                ("location_id", "=", parent_location.id),
-                ("name", "=", "Hàng nhận dư (Chờ trả)")
-            ], limit=1)
-            
-            if not excess_location:
-                excess_location = self.env["stock.location"].create({
-                    "name": "Hàng nhận dư (Chờ trả)",
-                    "location_id": parent_location.id,
-                    "usage": "internal",
-                })
+            source_location = rec._get_central_source_location()
+            excess_location = rec._get_holding_location()
+            if not source_location or not excess_location:
+                raise UserError(_("Không xác định được vị trí nguồn hoặc vị trí chờ thu hồi cho hàng dư."))
 
-            source_location = rec.picking_id.location_id
-
-            # 2. Trừ tồn kho tại Kho tổng
-            if rec.picking_id.picking_type_code == "internal":
-                self.env["stock.quant"]._update_available_quantity(
+            if rec._is_central_to_store_excess() or rec.picking_id.picking_type_code == "internal":
+                self.env["stock.quant"].sudo()._update_available_quantity(
                     rec.product_id, source_location, -rec.discrepancy_qty
                 )
-            
-            # 3. Cộng tồn kho vào địa điểm "Chờ trả" của Cửa hàng
-            self.env["stock.quant"]._update_available_quantity(
+            self.env["stock.quant"].sudo()._update_available_quantity(
                 rec.product_id, excess_location, rec.discrepancy_qty
+            )
+            rec.write(
+                {
+                    "source_location_id": source_location.id,
+                    "holding_location_id": excess_location.id,
+                    "central_stock_adjusted": True,
+                }
             )
 
     def action_create_recovery_picking(self):
@@ -151,46 +235,28 @@ class MerExcessReceipt(models.Model):
             ("code", "=", "internal"),
             ("warehouse_id.mis_role", "=", "central"),
         ], limit=1)
+        if not picking_type:
+            raise UserError(_("Chưa cấu hình loại phiếu nội bộ cho Kho tổng để tạo đơn thu hồi."))
 
-        # Tìm địa điểm "Chờ trả" của cửa hàng
-        parent_location = self.picking_id.location_dest_id
-        excess_location = self.env["stock.location"].search([
-            ("location_id", "=", parent_location.id),
-            ("name", "=", "Hàng nhận dư (Chờ trả)")
-        ], limit=1)
-
+        excess_location = self._get_holding_location()
         if not excess_location:
             raise UserError(_("Không tìm thấy địa điểm hàng dư tại cửa hàng để thu hồi."))
-
+        destination_location = self._get_central_source_location()
+        if not destination_location:
+            raise UserError(_("Không xác định được vị trí Kho tổng nhận hàng thu hồi."))
         picking_vals = {
             "picking_type_id": picking_type.id,
             "location_id": excess_location.id,
-            "location_dest_id": self.picking_id.location_id.id,
+            "location_dest_id": destination_location.id,
             "origin": self.name,
             "move_ids": [
                 (0, 0, {
-                    "name": _("Thu hồi hàng nhận dư từ %s: %s") % (self.store_id.name, self.name),
+                    "description_picking": _("Thu hồi hàng nhận dư"),
                     "product_id": self.product_id.id,
                     "product_uom_qty": self.discrepancy_qty,
                     "product_uom": self.product_id.uom_id.id,
                     "location_id": excess_location.id,
-                    "location_dest_id": self.picking_id.location_id.id,
-                })
-            ],
-        }
-        picking_vals = {
-            "picking_type_id": picking_type.id,
-            "location_id": excess_location.id,
-            "location_dest_id": self.picking_id.location_id.id,
-            "origin": self.name,
-            "move_ids": [
-                (0, 0, {
-                    "description_picking": "Thu hoi hang nhan du",
-                    "product_id": self.product_id.id,
-                    "product_uom_qty": self.discrepancy_qty,
-                    "product_uom": self.product_id.uom_id.id,
-                    "location_id": excess_location.id,
-                    "location_dest_id": self.picking_id.location_id.id,
+                    "location_dest_id": destination_location.id,
                 })
             ],
         }
@@ -204,9 +270,23 @@ class MerExcessReceipt(models.Model):
     def action_done(self):
         """Xác nhận hoàn tất sau khi Kho tổng nhận lại hàng."""
         self.ensure_one()
-        if (
-            self.recovery_picking_id
-            and self.recovery_picking_id.state != "done"
-        ):
-            raise UserError(_("Phiếu thu hồi tại Kho tổng chưa được Validate hoàn tất."))
+        if self.recovery_picking_id and self.recovery_picking_id.state not in ("done", "cancel"):
+            # Tự động điền số lượng và Validate phiếu thu hồi để tối ưu UX
+            for move in self.recovery_picking_id.move_ids:
+                move.quantity = move.product_uom_qty
+            try:
+                self.recovery_picking_id.button_validate()
+            except Exception as e:
+                error_msg = str(e)
+                if "lô" in error_msg.lower() or "sê-ri" in error_msg.lower() or "lot" in error_msg.lower() or "serial" in error_msg.lower():
+                    raise UserError(_(
+                        "Sản phẩm này có quản lý theo Lô/Date (Lot/Serial).\n"
+                        "Hệ thống không thể tự động nhận hàng vì cần bạn chỉ định chính xác mã Lô được thu hồi về.\n\n"
+                        "HƯỚNG DẪN: Vui lòng click vào mã phiếu màu tím [%s] trên màn hình, sau đó nhập số Lô thủ công và bấm Xác nhận (Validate) tại phiếu đó."
+                    ) % self.recovery_picking_id.name)
+                raise UserError(_("Không thể tự động Validate phiếu thu hồi %s. Lỗi hệ thống: %s") % (self.recovery_picking_id.name, error_msg))
+            
+            if self.recovery_picking_id.state != "done":
+                raise UserError(_("Phiếu thu hồi %s chưa được Validate hoàn tất. Vui lòng click vào mã phiếu để xử lý thủ công.") % self.recovery_picking_id.name)
+        
         self.state = "done"

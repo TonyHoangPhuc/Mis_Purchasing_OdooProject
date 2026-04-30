@@ -298,6 +298,8 @@ class MerPromotion(models.Model):
                 product_qtys[p['product_id'].id] = product_qtys.get(p['product_id'].id, 0.0) + p['qty']
 
             seen_products = set()
+            all_warehouse_ids = []
+            line_vals = []
             for p in products_map:
                 all_warehouse_ids.extend(p['warehouses'].ids)
                 if p['product_id'].id not in seen_products:

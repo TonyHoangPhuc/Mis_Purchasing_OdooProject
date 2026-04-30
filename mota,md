@@ -1,0 +1,602 @@
+# Mô tả tổng hợp chức năng hệ thống MIS Odoo Purchasing
+
+## 1. Tổng quan hệ thống
+
+Dự án là hệ thống ERP tùy biến trên nền tảng Odoo, tập trung vào nghiệp vụ mua hàng, quản lý cửa hàng, quản lý kho và kiểm soát sai lệch hàng hóa. Hệ thống gồm 3 module custom chính:
+
+- `merchandise_management`: quản lý bộ phận Merchandise, yêu cầu mua hàng, chương trình khuyến mãi, báo cáo sai lệch và dashboard theo dõi.
+- `store_management`: quản lý cửa hàng, định mức tồn kho, bán hàng tại cửa hàng, tạo PR bổ sung hàng và xử lý nhận hàng thực tế tại cửa hàng.
+- `warehouse_management`: quản lý QC nhập kho, kiểm soát phiếu nhập/xuất kho, trạng thái nhận hàng và liên kết PO/PR với kho.
+
+Các module được tích hợp với các phân hệ Odoo chuẩn như Purchase, Stock, Product, Sale, Account, Mail và Purchase Stock.
+
+## 2. Chức năng của module Merchandise Management
+
+### 2.1. Quản lý yêu cầu mua hàng Merchandise
+
+Model chính: `mer.purchase.request` và `mer.purchase.request.line`.
+
+Chức năng:
+
+- Tạo phiếu yêu cầu mua hàng PR với mã tự động dạng `PR/xxxxx`.
+- Quản lý danh sách sản phẩm cần mua, số lượng, đơn vị tính, đơn giá dự kiến và thành tiền.
+- Tính tổng tiền dự kiến của PR từ các dòng sản phẩm.
+- Ghi nhận người tạo, người phê duyệt, cửa hàng/kho liên quan, nhà cung cấp hoặc kho tổng.
+- Theo dõi trạng thái PR:
+  - Nháp
+  - Đã gửi
+  - Chờ quản lý duyệt
+  - Được phê duyệt
+  - Đang thực hiện/đã tạo PO
+  - Hoàn tất
+  - Từ chối
+  - Hủy
+- Kiểm tra PR phải có dòng sản phẩm trước khi gửi.
+- Kiểm tra điều khoản thanh toán trước khi trình quản lý.
+- Phê duyệt, từ chối, đưa về nháp, hủy và hoàn tất PR.
+- Tạo PO từ PR đã được phê duyệt.
+- Tự động xác nhận PO sau khi tạo.
+- Chặn tạo PO nếu sản phẩm đang bị đánh dấu dừng đặt hàng.
+- Hiển thị số PO liên quan đến PR.
+- Mở danh sách PO được tạo từ PR.
+- Gửi thông báo qua chatter cho bên liên quan khi tạo PO.
+
+### 2.2. Mở rộng xử lý PR theo cửa hàng và kho tổng
+
+Khi cài thêm `store_management`, PR được mở rộng thêm các chức năng:
+
+- Liên kết PR với cửa hàng yêu cầu.
+- Tự động đồng bộ kho cửa hàng khi chọn cửa hàng.
+- Chặn tạo PR trùng sản phẩm khi cửa hàng đã có PR đang xử lý.
+- Cho phép Merchandise chọn phương án đáp ứng cho từng dòng:
+  - Lấy từ kho tổng.
+  - Mua trực tiếp từ nhà cung cấp giao cửa hàng.
+  - Mua từ nhà cung cấp về kho tổng rồi giao cửa hàng.
+- Ghi nhận số lượng được duyệt riêng với số lượng cửa hàng yêu cầu.
+- Theo dõi tồn kho kho tổng, tồn khả dụng, giá trị tồn, kho nguồn và tình trạng đáp ứng.
+- Tạo PO theo nhóm nhà cung cấp.
+- Tạo phiếu điều chuyển nội bộ từ kho tổng về cửa hàng.
+- Tạo phiếu nhận tại cửa hàng nếu luồng đi qua địa điểm trung chuyển.
+- Theo dõi tiến trình hậu cần từng dòng PR:
+  - Không áp dụng
+  - Chờ kho tổng kiểm
+  - Đủ hàng chờ giao
+  - Chờ NCC giao kho tổng
+  - Chưa đủ hàng
+  - Chờ kho tổng giao
+  - Chờ cửa hàng nhận
+  - Hàng lỗi
+  - Đã giao cửa hàng
+- Cho phép kho tổng xác nhận đủ hàng hoặc thiếu hàng.
+- Cho phép chuyển dòng đang thiếu hàng từ luồng kho tổng sang mua nhà cung cấp.
+- Tự đồng bộ trạng thái PR theo tình trạng PO, phiếu kho và QC.
+
+### 2.3. Quản lý sản phẩm Merchandise
+
+Mở rộng `product.template` và `product.product` với các trường:
+
+- Dừng đặt hàng: không cho tạo PO khi sản phẩm đang bị khóa đặt hàng.
+- Trạng thái tồn kho Merchandise:
+  - Bình thường
+  - Thừa hàng
+  - Thiếu hàng
+  - Hàng tồn lâu
+- Luồng cung ứng:
+  - Kho tổng
+  - Trực tiếp từ nhà cung cấp
+- Giá khuyến mãi hiện tại.
+- Dòng khuyến mãi đang áp dụng.
+- Số ngày báo trước cận hạn.
+- Phần trăm giảm mặc định cho hàng cận hạn.
+
+### 2.4. Quản lý chương trình khuyến mãi
+
+Model chính: `mer.promotion` và `mer.promotion.line`.
+
+Chức năng:
+
+- Tạo chương trình khuyến mãi với mã tự động dạng `PROM/năm/xxxxx`.
+- Quản lý trạng thái khuyến mãi:
+  - Mới
+  - Đang chạy
+  - Hết hạn
+- Khai báo ngày bắt đầu, ngày kết thúc, mô tả, sản phẩm áp dụng và cửa hàng áp dụng.
+- Khai báo mức giảm giá theo từng sản phẩm.
+- Tính tồn kho của sản phẩm tại các cửa hàng áp dụng.
+- Giới hạn số lượng bán theo giá khuyến mãi.
+- Theo dõi số lượng đã bán và số lượng còn lại.
+- Không cho số lượng khuyến mãi tối đa vượt quá tồn kho hiện có.
+- Kích hoạt chương trình khuyến mãi sau khi kiểm tra đủ thông tin.
+- Tự động cập nhật giá khuyến mãi hiện tại cho sản phẩm.
+- Khi có nhiều khuyến mãi cùng áp dụng, hệ thống chọn giá khuyến mãi thấp nhất.
+- Kết thúc sớm chương trình và cập nhật lại giá sản phẩm.
+- Không cho xóa chương trình đang chạy.
+- Gửi thông báo qua chatter đến các cửa hàng áp dụng.
+
+### 2.5. Khuyến mãi hàng cận hạn
+
+Chức năng:
+
+- Quét các lô hàng còn tồn tại cửa hàng và sắp hết hạn.
+- Tự động nhận diện sản phẩm/lô hàng nằm trong ngưỡng cận hạn theo cấu hình từng sản phẩm.
+- Thêm sản phẩm cận hạn vào chương trình khuyến mãi.
+- Tự động gán mức giảm mặc định của sản phẩm.
+- Ghi nhận danh sách lô hàng, cửa hàng áp dụng và tổng tồn.
+- Có scheduler chạy hằng ngày để:
+  - Chuyển khuyến mãi quá hạn sang hết hạn.
+  - Quét hàng cận hạn.
+  - Cập nhật lại giá khuyến mãi của sản phẩm.
+- Có nút chạy scheduler thủ công từ giao diện.
+
+### 2.6. Báo cáo sai lệch hàng hóa
+
+Model chính: `mer.discrepancy.report`.
+
+Chức năng:
+
+- Tạo báo cáo sai lệch với mã tự động dạng `DR/xxxxx`.
+- Ghi nhận PO liên quan, phiếu kho liên quan, PR liên quan, sản phẩm, số lượng chứng từ, số lượng thực nhận, số lượng lỗi và chênh lệch.
+- Phân loại sai lệch:
+  - Hàng dư
+  - Hàng thiếu
+  - Hàng lỗi
+- Tự động gợi ý lý do sai lệch dựa trên số lượng thực nhận so với số lượng chứng từ.
+- Kiểm tra tính hợp lệ giữa lý do và số lượng sai lệch.
+- Ghi nhận phương án xử lý.
+- Hoàn tất báo cáo thủ công.
+- Với hàng thiếu:
+  - Có thể tạo PO bù trong luồng Merchandise cơ bản.
+  - Khi phát sinh từ cửa hàng, bắt buộc tạo PR bù và đi qua luồng duyệt Merchandise trước khi tạo PO.
+- Với hàng dư:
+  - Có thể tạo phiếu thu hồi hàng dư.
+- Với hàng lỗi:
+  - Liên kết phiếu trả hàng lỗi và trạng thái xử lý.
+- Theo dõi trạng thái xử lý:
+  - Chờ gửi Merchandise
+  - Chờ Merchandise tạo PR bù
+  - Đã tạo PR bù
+  - Chờ xử lý hàng lỗi
+  - Chờ kho tổng nhận hàng lỗi
+  - Kho tổng đã nhận hàng lỗi
+
+### 2.7. Dashboard Merchandise
+
+Model dịch vụ: `merchandise.dashboard`.
+
+Chức năng:
+
+- Hiển thị KPI số lượng PR theo trạng thái:
+  - Nháp
+  - Chờ xử lý/chờ duyệt
+  - Đang xử lý
+  - Hoàn tất
+  - Từ chối
+  - Lô hàng QC bị từ chối
+- Hiển thị pipeline các PR gần đây.
+- Hiển thị hoạt động gần đây từ chatter của PR.
+- Cho phép mở nhanh danh sách PR, PO và các lô hàng lỗi.
+- Có giao diện OWL riêng trong backend Odoo.
+
+## 3. Chức năng của module Store Management
+
+### 3.1. Quản lý cửa hàng
+
+Model chính: `store.store`.
+
+Chức năng:
+
+- Tạo và quản lý hồ sơ cửa hàng: tên, mã, trạng thái hoạt động, công ty, người phụ trách, mức ưu tiên bổ sung, thông tin liên hệ và địa chỉ.
+- Mã cửa hàng được chuẩn hóa tự động: chữ/số in hoa, tối đa 5 ký tự.
+- Khi tạo cửa hàng, hệ thống tự động tạo:
+  - Đối tác cửa hàng (`res.partner`).
+  - Kho cửa hàng (`stock.warehouse`).
+- Liên kết một cửa hàng với đúng một đối tác và một kho.
+- Đồng bộ tên, mã, trạng thái, địa chỉ giữa cửa hàng, đối tác và kho.
+- Phân loại kho cửa hàng bằng trường vai trò kho `mis_role = store`.
+- Không cho xóa cửa hàng đã có PR; chỉ nên lưu trữ.
+- Cho phép sửa liên kết kho khi cửa hàng bị liên kết sai.
+- Theo dõi số mặt hàng, số mặt hàng cần bổ sung, số PR và số đơn bán.
+- Tính doanh thu bán hàng, lợi nhuận gộp và tỷ suất lợi nhuận theo đơn bán của cửa hàng.
+
+### 3.2. Quản lý định mức sản phẩm theo cửa hàng
+
+Model chính: `store.product.line`.
+
+Chức năng:
+
+- Khai báo danh mục sản phẩm được bán hoặc quản lý tại từng cửa hàng.
+- Thiết lập tồn tối thiểu và tồn tối đa.
+- Tự động tính:
+  - Tồn hiện có.
+  - Tồn khả dụng.
+  - Số lượng đang chờ bổ sung.
+  - Số lượng đề xuất bổ sung.
+  - Cờ cần bổ sung hàng.
+- Tính số lượng đề xuất bổ sung theo công thức: nếu tồn khả dụng cộng số lượng đang chờ bổ sung nhỏ hơn tồn tối thiểu, đề xuất bổ sung tới mức tồn tối đa.
+- Không cho khai báo trùng sản phẩm trong cùng một cửa hàng.
+- Kiểm tra tồn tối đa phải lớn hơn hoặc bằng tồn tối thiểu.
+- Cho phép tạo PR bổ sung cho một sản phẩm đang thiếu.
+- Cho phép tạo PR bổ sung cho toàn bộ các sản phẩm đang thiếu của cửa hàng.
+- Kiểm tra trùng PR đang xử lý trước khi tạo PR mới.
+
+### 3.3. Bán hàng theo cửa hàng
+
+Mở rộng `sale.order` và `sale.order.line`.
+
+Chức năng:
+
+- Gắn đơn bán với cửa hàng bán.
+- Khi chọn cửa hàng, tự động chọn kho của cửa hàng cho đơn bán.
+- Lọc sản phẩm bán theo danh mục sản phẩm đang hoạt động của cửa hàng.
+- Chỉ hiển thị sản phẩm còn tồn khả dụng tại cửa hàng khi dùng context `store_sale_stock_only`.
+- Gắn dòng đơn bán với cửa hàng của đơn hàng.
+- Tính danh sách sản phẩm có sẵn tại cửa hàng để hỗ trợ chọn sản phẩm.
+
+### 3.4. Nhận hàng thực tế tại cửa hàng
+
+Mở rộng `stock.picking` và wizard `mer.delivery.discrepancy.wizard`.
+
+Chức năng:
+
+- Hiển thị phiếu nhận hàng chờ xử lý tại cửa hàng.
+- Cho phép cửa hàng kiểm hàng thực tế trước khi nhập kho.
+- Wizard kiểm hàng tự động gom sản phẩm theo phiếu kho.
+- Người dùng nhập:
+  - Số lượng hệ thống.
+  - Số lượng thực nhận.
+  - Số lượng hư hỏng.
+  - Ghi chú lỗi.
+- Kiểm tra số lượng thực nhận không âm.
+- Kiểm tra số lượng hư hỏng không âm và không vượt số lượng thực nhận.
+- Bắt buộc nhập ghi chú lỗi nếu có hàng hư hỏng.
+- Ghi kết quả kiểm hàng vào các dòng stock move.
+- Tự động tạo hoặc cập nhật báo cáo:
+  - Thiếu hàng.
+  - Hàng lỗi.
+  - Nhận dư hàng.
+- Với hàng dư từ nhà cung cấp, hệ thống ghi nhận phần dư là hoàn trả xe và chỉ nhận đúng số lượng PO.
+- Đánh dấu phiếu đã hoàn tất bước kiểm hàng thực tế.
+
+### 3.5. Xác nhận nhập hàng vào kho cửa hàng
+
+Chức năng:
+
+- Sau khi kiểm hàng, cửa hàng xác nhận nhập hàng hợp lệ vào tồn kho.
+- Nếu có thiếu hàng, hệ thống tạo báo cáo thiếu hàng và gửi Merchandise.
+- Nếu có dư hàng, hệ thống chỉ nhập đúng số lượng chứng từ và tạo báo cáo nhận dư.
+- Nếu vừa thiếu vừa dư, hệ thống tạo đầy đủ báo cáo tương ứng.
+- Nếu không có số lượng thực nhận, phiếu nhập bị hủy và tạo báo cáo thiếu nếu có chênh lệch.
+- Nếu phát hiện hàng hư hỏng, không cho nhập kho bằng luồng đạt, bắt buộc xử lý hàng lỗi.
+- Cập nhật trạng thái QC, người kiểm, thời điểm kiểm.
+- Đồng bộ trạng thái PR liên quan sau khi nhập hàng.
+
+### 3.6. Xử lý hàng lỗi tại cửa hàng
+
+Chức năng:
+
+- Cho phép từ chối lô nhận nếu có hàng hư hỏng.
+- Tạo báo cáo hàng lỗi gửi Merchandise.
+- Nếu hàng lỗi đến trực tiếp từ NCC:
+  - Tạo phiếu trả nhà cung cấp.
+  - Hủy phiếu nhập gốc.
+  - Không cộng tồn cửa hàng.
+- Nếu hàng lỗi đến từ kho tổng:
+  - Tạo phiếu trả hàng lỗi về kho tổng.
+  - Hủy phiếu nhập gốc.
+  - Không cộng tồn khả dụng của cửa hàng hoặc kho tổng.
+- Hủy các báo cáo thiếu/dư đã tạo trước đó nếu toàn bộ lô bị từ chối do lỗi.
+- Thông báo cho Merchandise theo dõi và tạo bổ sung hàng nếu cần.
+
+### 3.7. Báo cáo nhận dư hàng
+
+Model chính: `mer.excess.receipt`.
+
+Chức năng:
+
+- Tạo báo cáo nhận dư với mã tự động dạng `RE/xxxxx`.
+- Ghi nhận phiếu kho gốc, cửa hàng, sản phẩm, số lượng hệ thống, số lượng thực tế và số lượng dư.
+- Trạng thái xử lý:
+  - Nháp
+  - Chờ Merchandise duyệt
+  - Merchandise đã duyệt
+  - Đang thu hồi hàng
+  - Hoàn tất
+- Khi gửi báo cáo, hệ thống kiểm tra phải có số lượng dư.
+- Với luồng kho tổng giao cửa hàng, hệ thống điều chỉnh phần dư vào vị trí hàng nhận dư chờ trả.
+- Merchandise phê duyệt báo cáo và ghi nhận phần dư không được cộng vào tồn cửa hàng.
+- Tạo phiếu thu hồi hàng dư từ vị trí chờ trả về kho tổng.
+- Có thể tự động validate phiếu thu hồi nếu không vướng yêu cầu lô/serial.
+- Theo dõi tình trạng: chờ gửi, chờ duyệt, chờ kho tổng thu hồi, đang thu hồi, đã thu hồi.
+
+### 3.8. Hóa đơn nhà cung cấp theo cửa hàng
+
+Mở rộng `account.move`.
+
+Chức năng:
+
+- Gắn hóa đơn với cửa hàng.
+- Có bộ lọc hóa đơn sắp đến hạn thanh toán trong 7 ngày.
+- Menu riêng để xem hóa đơn nhà cung cấp phục vụ luồng Merchandise/Store.
+
+## 4. Chức năng của module Warehouse Management
+
+### 4.1. QC phiếu nhập kho
+
+Mở rộng `stock.picking`.
+
+Chức năng:
+
+- Gắn phiếu kho với PR Merchandise liên quan thông qua PO/origin.
+- Thêm trạng thái QC:
+  - Nháp
+  - Đang kiểm tra
+  - Đạt
+  - Hàng lỗi
+- Ghi nhận người kiểm QC, thời gian kiểm và ghi chú QC.
+- Tính tổng số lượng dự kiến, số lượng thực nhận, số lượng hư hỏng và số lượng chênh lệch.
+- Xác định phiếu có chênh lệch hay không.
+- Chỉ cho thao tác QC trên phiếu nhập.
+- Bắt đầu QC từ trạng thái nháp.
+- Đánh dấu QC đạt:
+  - Kiểm tra đã có số lượng thực nhận.
+  - Cập nhật người kiểm và thời gian.
+  - Validate phiếu nhập nếu phiếu chưa hoàn tất.
+  - Tự động tạo hóa đơn nhà cung cấp cho PO nếu đủ điều kiện.
+  - Tự động khóa/hoàn tất PO khi tất cả phiếu nhập đã xong.
+- Đánh dấu QC không đạt:
+  - Bắt buộc có ghi chú lỗi.
+  - Cập nhật trạng thái hàng lỗi.
+  - Nếu phiếu chưa validate, hủy phiếu để tồn kho không thay đổi.
+  - Nếu phiếu đã validate, tạo phiếu trả hàng về NCC hoặc hoàn trả nội bộ.
+
+### 4.2. Ghi nhận lỗi trên từng dòng stock move
+
+Mở rộng `stock.move`.
+
+Chức năng:
+
+- Ghi chú lỗi theo từng dòng hàng.
+- Ghi nhận số lượng hư hỏng.
+- Tính chênh lệch dòng hàng giữa số lượng dự kiến và số lượng thực nhận.
+- Không cho số lượng hư hỏng âm.
+- Không cho số lượng hư hỏng lớn hơn số lượng thực nhận.
+
+### 4.3. Trạng thái nhận hàng trên PO
+
+Mở rộng `purchase.order`.
+
+Chức năng:
+
+- Gắn PO với PR Merchandise theo trường `origin`.
+- Tính trạng thái nhận hàng của PO:
+  - Chưa có phiếu nhận.
+  - Chờ cửa hàng nhận và QC.
+  - Đã nhận hàng.
+  - Hàng lỗi.
+- Hỗ trợ khóa/hoàn tất PO an toàn sau khi nhận hàng xong.
+
+### 4.4. Xử lý luồng kho tổng
+
+Khi kết hợp với `store_management`, kho tổng có thêm các chức năng:
+
+- Phân loại kho theo vai trò:
+  - Kho tổng.
+  - Kho cửa hàng.
+- Nhận hàng từ NCC về kho tổng.
+- Kiểm hàng thực tế tại kho tổng.
+- Nếu NCC giao thiếu kho tổng:
+  - Tạo báo cáo thiếu hàng.
+  - Gửi Merchandise xử lý.
+  - Cập nhật dòng PR sang trạng thái chưa đủ hàng.
+- Nếu NCC giao dư kho tổng:
+  - Không cộng phần dư vào tồn kho.
+  - Ghi chú hoàn trả phần dư.
+- Nếu NCC giao hàng lỗi:
+  - Tạo báo cáo hàng lỗi.
+  - Tạo phiếu trả NCC.
+  - Hủy phiếu nhập gốc.
+  - Mở lại dòng PR để Merchandise tạo PO mới nếu cần.
+- Kiểm tra tồn kho tổng cho các PR lấy hàng nội bộ.
+- Chuyển dòng đủ hàng sang danh sách chờ giao.
+- Tạo phiếu giao từ kho tổng đến cửa hàng.
+- Xác nhận giao hàng từ kho tổng.
+- Theo dõi danh sách đơn cần giao, đã giao, đơn thu hồi, đơn hàng lỗi và lịch sử luồng vận chuyển.
+
+### 4.5. Tùy chỉnh giao diện kho
+
+Chức năng:
+
+- Bổ sung menu quản lý QC nhập kho.
+- Bổ sung các menu tích hợp giữa kho, Merchandise và cửa hàng.
+- Có nút systray để ẩn/hiện app switcher trong giao diện backend Odoo, trạng thái lưu bằng `localStorage`.
+
+## 5. Luồng nghiệp vụ chính
+
+### 5.1. Luồng cửa hàng yêu cầu bổ sung hàng từ định mức tồn
+
+1. Cửa hàng khai báo sản phẩm, tồn tối thiểu và tồn tối đa.
+2. Hệ thống tính tồn hiện có, tồn khả dụng và số lượng đang chờ bổ sung.
+3. Nếu tồn hiệu dụng thấp hơn tồn tối thiểu, hệ thống đề xuất số lượng cần bổ sung.
+4. Cửa hàng tạo PR bổ sung hàng.
+5. Hệ thống kiểm tra có PR trùng đang xử lý hay không.
+6. PR được gửi sang Merchandise.
+7. Merchandise chọn phương án đáp ứng từng dòng.
+8. PR được trình quản lý duyệt.
+9. Sau khi duyệt, hệ thống tạo PO hoặc phiếu điều chuyển nội bộ tùy phương án.
+10. Kho/cửa hàng nhận hàng, kiểm hàng, xử lý thiếu/dư/lỗi nếu phát sinh.
+11. Khi tất cả luồng hậu cần hoàn tất, PR được đồng bộ sang trạng thái hoàn tất.
+
+### 5.2. Luồng mua trực tiếp từ nhà cung cấp giao cửa hàng
+
+1. Merchandise chọn phương án mua từ NCC giao trực tiếp cửa hàng.
+2. Hệ thống tạo PO với loại phiếu nhập của kho cửa hàng.
+3. Nhà cung cấp giao hàng đến cửa hàng.
+4. Cửa hàng kiểm hàng thực tế.
+5. Nếu đạt, cửa hàng xác nhận nhập kho.
+6. Nếu thiếu, tạo báo cáo thiếu hàng gửi Merchandise.
+7. Nếu dư, chỉ nhập đúng số lượng chứng từ và ghi nhận phần dư.
+8. Nếu lỗi, tạo báo cáo hàng lỗi, tạo phiếu trả NCC và hủy phiếu nhập.
+
+### 5.3. Luồng mua từ nhà cung cấp về kho tổng rồi giao cửa hàng
+
+1. Merchandise chọn phương án NCC giao kho tổng.
+2. Hệ thống tạo PO nhập về kho tổng.
+3. Kho tổng kiểm hàng.
+4. Nếu đạt, hàng được nhập kho tổng.
+5. Kho tổng kiểm khả năng giao cho cửa hàng.
+6. Nếu đủ hàng, tạo phiếu giao về cửa hàng.
+7. Cửa hàng kiểm hàng khi nhận.
+8. Nếu cửa hàng xác nhận đạt, hàng được nhập vào tồn cửa hàng.
+9. Nếu thiếu/dư/lỗi, hệ thống tạo báo cáo tương ứng và thông báo Merchandise.
+
+### 5.4. Luồng lấy hàng từ kho tổng
+
+1. Merchandise chọn phương án lấy hàng từ kho tổng.
+2. Kho tổng kiểm tồn khả dụng.
+3. Nếu đủ hàng, chuyển dòng PR sang trạng thái đủ hàng chờ giao.
+4. Kho tổng xác nhận giao, hệ thống tạo phiếu điều chuyển.
+5. Cửa hàng nhận hàng và kiểm hàng.
+6. Nếu đạt, hàng nhập kho cửa hàng.
+7. Nếu phát sinh sai lệch, tạo báo cáo thiếu/dư/lỗi và đồng bộ trạng thái PR.
+
+### 5.5. Luồng xử lý thiếu hàng
+
+1. Thiếu hàng được phát hiện khi kho tổng hoặc cửa hàng kiểm hàng thực tế.
+2. Hệ thống tạo báo cáo sai lệch loại thiếu hàng.
+3. Báo cáo được gửi Merchandise.
+4. Merchandise tạo PR bù hàng.
+5. PR bù đi qua luồng duyệt và xử lý như PR thông thường.
+6. Sau khi hàng bù được giao/nhận, trạng thái được cập nhật theo phiếu kho.
+
+### 5.6. Luồng xử lý dư hàng
+
+1. Dư hàng được phát hiện khi kiểm hàng.
+2. Nếu dư từ NCC, hệ thống chỉ nhận đúng số lượng chứng từ và ghi nhận phần dư là hoàn trả.
+3. Nếu dư trong luồng kho tổng/cửa hàng, hệ thống tạo báo cáo nhận dư.
+4. Merchandise phê duyệt báo cáo.
+5. Hệ thống đưa hàng dư vào vị trí chờ thu hồi.
+6. Kho tổng tạo phiếu thu hồi hàng dư.
+7. Sau khi thu hồi xong, báo cáo chuyển hoàn tất.
+
+### 5.7. Luồng xử lý hàng lỗi
+
+1. Hàng lỗi được ghi nhận trong bước kiểm hàng thực tế.
+2. Người kiểm nhập số lượng lỗi và ghi chú lỗi.
+3. Hệ thống tạo báo cáo hàng lỗi.
+4. Nếu lỗi tại phiếu nhập từ NCC, hệ thống tạo phiếu trả NCC.
+5. Nếu lỗi khi cửa hàng nhận từ kho tổng, hệ thống tạo phiếu trả về kho tổng.
+6. Phiếu nhập gốc bị hủy hoặc đánh dấu QC không đạt để không cộng tồn.
+7. Merchandise nhận thông báo để xử lý bổ sung hàng hoặc tạo lại PO.
+
+## 6. Phân quyền người dùng
+
+### 6.1. Merchandise
+
+Nhóm quyền:
+
+- Nhân viên Merchandise.
+- Quản lý Merchandise.
+
+Quyền chính:
+
+- Quản lý PR Merchandise.
+- Quản lý dòng PR.
+- Quản lý báo cáo sai lệch.
+- Quản lý chương trình khuyến mãi và dòng khuyến mãi.
+- Xem một số dữ liệu tồn kho phục vụ lập kế hoạch.
+
+### 6.2. Cửa hàng
+
+Nhóm quyền:
+
+- Nhân viên cửa hàng.
+- Quản lý cửa hàng.
+
+Quyền chính:
+
+- Quản lý thông tin cửa hàng và danh mục sản phẩm cửa hàng.
+- Tạo và theo dõi PR từ cửa hàng.
+- Tạo báo cáo thiếu/dư/lỗi khi nhận hàng.
+- Dùng wizard kiểm hàng thực tế.
+- Quản lý đơn bán của cửa hàng.
+- Quản lý cửa hàng có thêm quyền xóa/cập nhật cao hơn nhân viên.
+
+### 6.3. Kho
+
+Nhóm quyền:
+
+- Nhân viên QC nhập kho.
+- Quản lý QC nhập kho.
+
+Quyền chính:
+
+- Xem và cập nhật PR/dòng PR phục vụ kiểm hàng và giao hàng.
+- Thực hiện QC nhập kho.
+- Kiểm tra tồn kho tổng.
+- Xử lý phiếu giao, phiếu nhận, phiếu trả hàng và các báo cáo sai lệch liên quan.
+
+## 7. Dữ liệu tự động và cấu hình
+
+Hệ thống có các sequence tự động:
+
+- `mer.purchase.request`: mã PR dạng `PR/xxxxx`.
+- `mer.discrepancy.report`: mã báo cáo sai lệch dạng `DR/xxxxx`.
+- `mer.promotion`: mã khuyến mãi dạng `PROM/năm/xxxxx`.
+- `mer.excess.receipt`: mã báo cáo nhận dư dạng `RE/xxxxx`.
+
+Hệ thống có scheduler:
+
+- `Merchandise: Cập nhật giá Khuyến mãi Hàng ngày`.
+- Chạy hằng ngày để cập nhật trạng thái khuyến mãi, quét hàng cận hạn và cập nhật giá khuyến mãi sản phẩm.
+
+## 8. Các màn hình và menu chính
+
+### 8.1. Merchandise
+
+- Dashboard Merchandise.
+- Quản lý yêu cầu mua hàng PR.
+- PR chờ xử lý/chờ duyệt.
+- PR đang xử lý.
+- PR hoàn tất.
+- Quản lý PO.
+- Quản lý chương trình khuyến mãi.
+- Báo cáo sai lệch hàng hóa.
+- Báo cáo thiếu hàng.
+- Báo cáo dư hàng.
+- Danh mục sản phẩm Merchandise.
+- Cấu hình Merchandise.
+
+### 8.2. Cửa hàng
+
+- Danh sách cửa hàng.
+- Danh mục sản phẩm theo cửa hàng.
+- PR của cửa hàng.
+- Phiếu nhận hàng chờ xử lý.
+- Lịch sử nhận hàng.
+- Đơn bán của cửa hàng.
+- Báo cáo nhận dư.
+- Wizard kiểm hàng thực tế.
+
+### 8.3. Kho
+
+- QC nhập kho.
+- Phiếu chờ cửa hàng nhận.
+- Kiểm hàng kho tổng.
+- Đơn cần giao.
+- Đơn đã giao.
+- Đơn thu hồi.
+- Đơn hàng lỗi.
+- Lịch sử luồng vận chuyển.
+
+## 9. Các tích hợp quan trọng
+
+- Tích hợp Purchase: tạo PO từ PR, xác nhận PO, theo dõi PO và tự động tạo hóa đơn NCC khi nhận hàng đạt.
+- Tích hợp Stock: tạo phiếu nhập, phiếu xuất, phiếu điều chuyển nội bộ, phiếu trả NCC, phiếu thu hồi hàng dư và phiếu trả hàng lỗi.
+- Tích hợp Sale: đơn bán theo cửa hàng và lọc sản phẩm theo tồn cửa hàng.
+- Tích hợp Account: hóa đơn nhà cung cấp có liên kết cửa hàng và bộ lọc sắp đến hạn.
+- Tích hợp Mail/Chatter: gửi thông báo cho Merchandise, kho, cửa hàng và nhà cung cấp/kho tổng theo từng sự kiện nghiệp vụ.
+- Tích hợp Product: mở rộng thông tin sản phẩm phục vụ đặt hàng, luồng cung ứng, khuyến mãi và hàng cận hạn.
+
+## 10. Kết luận
+
+Hệ thống hỗ trợ trọn vẹn quy trình từ cửa hàng phát hiện nhu cầu bổ sung hàng, Merchandise phê duyệt và tạo phương án đáp ứng, kho tổng hoặc nhà cung cấp giao hàng, cửa hàng/kho kiểm hàng thực tế, đến xử lý thiếu hàng, dư hàng, hàng lỗi và cập nhật trạng thái PR/PO. Ngoài ra hệ thống còn có chức năng khuyến mãi, tự động nhận diện hàng cận hạn, dashboard theo dõi và phân quyền riêng cho Merchandise, cửa hàng và kho.

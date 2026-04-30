@@ -14,6 +14,19 @@ class MerPurchaseRequest(models.Model):
         string="Cửa hàng yêu cầu",
         tracking=True,
     )
+    is_replenishment_from_discrepancy = fields.Boolean(
+        string="PR bù từ báo cáo sai lệch",
+        default=False,
+        copy=False,
+        tracking=True,
+    )
+    source_discrepancy_report_id = fields.Many2one(
+        "mer.discrepancy.report",
+        string="Báo cáo sai lệch nguồn",
+        copy=False,
+        readonly=True,
+        tracking=True,
+    )
     partner_id = fields.Many2one(
         "res.partner",
         string="Kho tổng / Nhà cung cấp",
@@ -44,7 +57,7 @@ class MerPurchaseRequest(models.Model):
         search="_search_purchase_order_count",
     )
     can_create_processing = fields.Boolean(
-        string="Can Create Processing",
+        string="Có thể tạo xử lý",
         compute="_compute_document_counts",
     )
     internal_line_count = fields.Integer(
@@ -103,7 +116,12 @@ class MerPurchaseRequest(models.Model):
                 store = self.env["store.store"].browse(vals["store_id"])
                 vals["warehouse_id"] = store.warehouse_id.id
             product_ids = self._extract_product_ids_from_line_commands(vals.get("line_ids", []))
-            if vals.get("store_id") and product_ids:
+            skip_duplicate_check = (
+                self.env.context.get("allow_discrepancy_replenishment")
+                or vals.get("is_replenishment_from_discrepancy")
+                or vals.get("source_discrepancy_report_id")
+            )
+            if vals.get("store_id") and product_ids and not skip_duplicate_check:
                 duplicate_request = self._find_duplicate_store_request(vals["store_id"], product_ids)
                 if duplicate_request:
                     raise UserError(
@@ -148,16 +166,27 @@ class MerPurchaseRequest(models.Model):
                     _("Từ menu Cửa hàng, bạn chỉ được tạo PR, gửi PR và theo dõi trạng thái xử lý.")
                 )
 
-    @api.depends("line_ids.fulfillment_method", "line_ids.purchase_order_id", "line_ids.internal_picking_id")
+    @api.depends(
+        "line_ids.fulfillment_method",
+        "line_ids.purchase_order_id",
+        "line_ids.internal_picking_id",
+        "line_ids.internal_flow_state",
+    )
     def _compute_document_counts(self):
         for request in self:
             request.purchase_order_count = len(request.line_ids.mapped("purchase_order_id"))
             request.internal_picking_count = len(request.line_ids.mapped("internal_picking_id"))
             request.can_create_processing = bool(
                 request.line_ids.filtered(
-                    lambda line: line.fulfillment_method
-                    and not line.purchase_order_id
-                    and not line.internal_picking_id
+                    lambda line: (
+                        line.fulfillment_method in ("supplier", "supplier_central")
+                        and not line.purchase_order_id
+                    )
+                    or (
+                        line.fulfillment_method == "internal"
+                        and not line.internal_picking_id
+                        and line.internal_flow_state in (False, "not_applicable")
+                    )
                 )
             )
 
@@ -337,14 +366,14 @@ class MerPurchaseRequest(models.Model):
     def _build_central_stock_check_message(self, ready_lines, insufficient_lines):
         self.ensure_one()
         message_lines = [
-            _("Kho tong da kiem tra ton kho cho PR <b>%s</b>.") % self.name,
+            _("Kho tổng đã kiểm tra tồn kho cho PR <b>%s</b>.") % self.name,
         ]
         if ready_lines:
-            message_lines.append(_("Cac dong du hang cho giao:"))
+            message_lines.append(_("Các dòng đủ hàng chờ giao:"))
             message_lines.append(
                 "<ul>%s</ul>"
                 % "".join(
-                    "<li>%s: kha dung %.2f, can giao %.2f, sau giao con %.2f.</li>"
+                    "<li>%s: khả dụng %.2f, cần giao %.2f, sau giao còn %.2f.</li>"
                     % (
                         line.product_id.display_name,
                         line.source_available_qty,
@@ -355,11 +384,11 @@ class MerPurchaseRequest(models.Model):
                 )
             )
         if insufficient_lines:
-            message_lines.append(_("Cac dong chua du hang:"))
+            message_lines.append(_("Các dòng chưa đủ hàng:"))
             message_lines.append(
                 "<ul>%s</ul>"
                 % "".join(
-                    "<li>%s: kha dung %.2f, can giao %.2f, thieu %.2f.</li>"
+                    "<li>%s: khả dụng %.2f, cần giao %.2f, thiếu %.2f.</li>"
                     % (
                         line.product_id.display_name,
                         line.source_available_qty,
@@ -582,7 +611,15 @@ class MerPurchaseRequest(models.Model):
             raise UserError(_("PR cần ở trạng thái đã duyệt hoặc đang thực hiện trước khi khởi tạo xử lý."))
 
         lines_to_process = self.line_ids.filtered(
-            lambda line: line.fulfillment_method and not line.purchase_order_id and not line.internal_picking_id
+            lambda line: (
+                line.fulfillment_method in ("supplier", "supplier_central")
+                and not line.purchase_order_id
+            )
+            or (
+                line.fulfillment_method == "internal"
+                and not line.internal_picking_id
+                and line.internal_flow_state in (False, "not_applicable")
+            )
         )
         if not lines_to_process:
             raise UserError(_("Tất cả dòng sản phẩm của PR này đã được khởi tạo xử lý rồi."))
@@ -648,6 +685,7 @@ class MerPurchaseRequest(models.Model):
             "res_model": "mer.purchase.request",
             "res_id": self.id,
             "view_mode": "form",
+            "views": [(False, "form")],
             "target": "current",
         }
 
@@ -676,6 +714,7 @@ class MerPurchaseRequest(models.Model):
                 "res_model": "mer.purchase.request",
                 "res_id": self.id,
                 "view_mode": "form",
+                "views": [(False, "form")],
                 "target": "current",
                 "context": dict(self.env.context, central_check_menu=1),
             }
@@ -688,6 +727,7 @@ class MerPurchaseRequest(models.Model):
             "res_model": "mer.purchase.request",
             "res_id": self.id,
             "view_mode": "form",
+            "views": [(False, "form")],
             "target": "current",
             "context": dict(self.env.context, central_check_menu=1),
         }
@@ -767,25 +807,25 @@ class MerPurchaseRequest(models.Model):
             )
 
             if not internal_lines:
-                request.central_flow_status = _("Khong qua Kho tong")
+                request.central_flow_status = _("Không qua Kho tổng")
             elif request.insufficient_stock_count:
-                request.central_flow_status = _("Kho tong chua du hang")
+                request.central_flow_status = _("Kho tổng chưa đủ hàng")
             elif request.pending_central_check_count:
-                request.central_flow_status = _("Cho Kho tong kiem hang de giao")
+                request.central_flow_status = _("Chờ Kho tổng kiểm hàng để giao")
             elif request.ready_delivery_count:
                 request.central_flow_status = _("\u0110\u1ee7 h\u00e0ng, ch\u1edd x\u00e1c nh\u1eadn giao")
             elif waiting_receipt_count:
-                request.central_flow_status = _("Cho NCC giao Kho tong")
+                request.central_flow_status = _("Chờ NCC giao Kho tổng")
             elif request.waiting_delivery_count:
-                request.central_flow_status = _("Cho Kho tong giao hang")
+                request.central_flow_status = _("Chờ Kho tổng giao hàng")
             elif waiting_store_receipt_count:
-                request.central_flow_status = _("Cho cua hang nhan hang")
+                request.central_flow_status = _("Chờ cửa hàng nhận hàng")
             elif has_rejected_line:
-                request.central_flow_status = _("Co lo hang loi")
+                request.central_flow_status = _("Có lô hàng lỗi")
             elif all(request._is_line_logistically_completed(line) for line in internal_lines):
-                request.central_flow_status = _("Da giao hang ve cua hang")
+                request.central_flow_status = _("Đã giao hàng về cửa hàng")
             else:
-                request.central_flow_status = _("Dang xu ly")
+                request.central_flow_status = _("Đang xử lý")
 
     def _get_ready_internal_lines(self):
         self.ensure_one()
@@ -818,7 +858,7 @@ class MerPurchaseRequest(models.Model):
             chunks.append(
                 "<ul>%s</ul>"
                 % "".join(
-                    "<li>%s: kha dung %.2f, can giao %.2f, thieu %.2f.</li>"
+                    "<li>%s: khả dụng %.2f, cần giao %.2f, thiếu %.2f.</li>"
                     % (
                         line.product_id.display_name,
                         line.source_available_qty,
@@ -850,6 +890,7 @@ class MerPurchaseRequest(models.Model):
             "res_model": "mer.purchase.request",
             "res_id": self.id,
             "view_mode": "form",
+            "views": [(False, "form")],
             "target": "current",
             "context": dict(self.env.context, central_check_menu=1),
         }
@@ -1176,10 +1217,56 @@ class MerPurchaseRequestLine(models.Model):
             "name": _("Tồn kho tham chiếu"),
             "res_model": "stock.quant",
             "view_mode": "list,form",
+            "views": [(False, "list"), (False, "form")],
             "domain": [
                 ("product_id", "=", self.product_id.id),
                 ("location_id", "child_of", locations),
             ],
+        }
+
+    def action_fallback_to_supplier(self):
+        for line in self:
+            if line.fulfillment_method != "internal":
+                raise UserError(_("Chỉ có thể chuyển sang mua NCC cho dòng đang lấy hàng từ Kho tổng."))
+            if line.internal_flow_state != "waiting_stock":
+                raise UserError(_("Chỉ có thể chuyển sang mua NCC khi Kho tổng đang ở trạng thái Chưa đủ hàng."))
+            if line.purchase_order_id or line.internal_picking_id:
+                raise UserError(_("Dòng PR này đã có chứng từ xử lý, không thể chuyển sang mua NCC."))
+
+            supplier = line._get_product_supplier_candidates()[:1]
+            if not supplier:
+                supplier = line.product_id.seller_ids.mapped("partner_id")[:1]
+            if not supplier:
+                raise UserError(_("Sản phẩm chưa có nhà cung cấp. Vui lòng cấu hình nhà cung cấp trước khi tạo PO."))
+
+            seller = line.product_id.seller_ids.filtered(lambda seller_info: seller_info.partner_id == supplier)[:1]
+            vals = {
+                "fulfillment_method": "supplier",
+                "supplier_id": supplier.id,
+                "source_warehouse_id": False,
+                "internal_flow_state": "not_applicable",
+            }
+            if seller:
+                vals["price_unit"] = seller.price
+
+            line.with_context(store_skip_sync_rule=True).write(vals)
+            line.request_id.message_post(
+                body=_(
+                    "Dòng PR %(product)s đã được chuyển từ Kho tổng sang mua Nhà cung cấp %(supplier)s."
+                )
+                % {
+                    "product": line.product_id.display_name,
+                    "supplier": supplier.display_name,
+                }
+            )
+
+        return {
+            "type": "ir.actions.act_window",
+            "res_model": "mer.purchase.request",
+            "res_id": self[:1].request_id.id,
+            "view_mode": "form",
+            "views": [(False, "form")],
+            "target": "current",
         }
 
     store_receipt_picking_id = fields.Many2one(
@@ -1190,17 +1277,17 @@ class MerPurchaseRequestLine(models.Model):
     )
     internal_flow_state = fields.Selection(
         [
-            ("not_applicable", "Khong ap dung"),
-            ("pending_check", "Cho Kho tong kiem"),
+            ("not_applicable", "Không áp dụng"),
+            ("pending_check", "Chờ Kho tổng kiểm"),
             ("ready_delivery", "\u0110\u1ee7 h\u00e0ng ch\u1edd giao"),
-            ("waiting_receipt", "Cho NCC giao Kho tong"),
-            ("waiting_stock", "Chua du hang"),
-            ("waiting_delivery", "Cho Kho tong giao"),
-            ("waiting_store_receipt", "Cho cua hang nhan"),
-            ("rejected", "Hang loi"),
-            ("delivered", "Da giao cua hang"),
+            ("waiting_receipt", "Chờ NCC giao Kho tổng"),
+            ("waiting_stock", "Chưa đủ hàng"),
+            ("waiting_delivery", "Chờ Kho tổng giao"),
+            ("waiting_store_receipt", "Chờ cửa hàng nhận"),
+            ("rejected", "Hàng lỗi"),
+            ("delivered", "Đã giao cửa hàng"),
         ],
-        string="Tien trinh hau can",
+        string="Tiến trình hậu cần",
         default="not_applicable",
         copy=False,
         tracking=True,
@@ -1229,7 +1316,7 @@ class MerPurchaseRequestLine(models.Model):
     )
     def _compute_route_status_display(self):
         for line in self:
-            status = _("Chua khoi tao")
+            status = _("Chưa khởi tạo")
             if line.fulfillment_method == "supplier":
                 if line.purchase_order_id:
                     receipt_pickings = line.purchase_order_id.picking_ids.filtered(
@@ -1237,15 +1324,15 @@ class MerPurchaseRequestLine(models.Model):
                         and picking.picking_type_id.warehouse_id == line.request_warehouse_id
                     )
                     if receipt_pickings.filtered(lambda picking: picking.state == "done"):
-                        status = _("Cua hang da nhan hang")
+                        status = _("Cửa hàng đã nhận hàng")
                     elif receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
-                        status = _("Hang loi")
+                        status = _("Hàng lỗi")
                     elif receipt_pickings:
-                        status = _("Cho cua hang nhan va QC")
+                        status = _("Chờ cửa hàng nhận và QC")
                     else:
-                        status = _("PO da tao")
+                        status = _("PO đã tạo")
                 else:
-                    status = _("Cho tao PO NCC")
+                    status = _("Chờ tạo PO NCC")
             elif line.fulfillment_method == "supplier_central":
                 if line.purchase_order_id:
                     receipt_pickings = line.purchase_order_id.picking_ids.filtered(
@@ -1254,50 +1341,50 @@ class MerPurchaseRequestLine(models.Model):
                         and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
                     )
                     if receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
-                        status = _("Kho tong QC khong dat")
+                        status = _("Kho tổng QC không đạt")
                     elif line.store_receipt_picking_id and line.store_receipt_picking_id.state == "done":
-                        status = _("Cua hang da nhan hang")
+                        status = _("Cửa hàng đã nhận hàng")
                     elif line.store_receipt_picking_id and line.store_receipt_picking_id.wm_qc_status == "rejected":
-                        status = _("Hang loi")
+                        status = _("Hàng lỗi")
                     elif line.internal_flow_state == "waiting_store_receipt":
-                        status = _("Cho cua hang nhan va QC")
+                        status = _("Chờ cửa hàng nhận và QC")
                     elif line.internal_picking_id:
-                        status = _("Cho Kho tong giao hang")
+                        status = _("Chờ Kho tổng giao hàng")
                     elif line.internal_flow_state == "ready_delivery":
                         status = _("\u0110\u1ee7 h\u00e0ng, ch\u1edd x\u00e1c nh\u1eadn giao")
                     elif line.internal_flow_state == "waiting_stock":
-                        status = _("Kho tong chua du hang de giao")
+                        status = _("Kho tổng chưa đủ hàng để giao")
                     elif receipt_pickings.filtered(lambda picking: picking.state == "done"):
-                        status = _("Kho tong da nhan, cho kiem hang de giao")
+                        status = _("Kho tổng đã nhận, chờ kiểm hàng để giao")
                     elif receipt_pickings:
-                        status = _("Cho Kho tong QC hang NCC")
+                        status = _("Chờ Kho tổng QC hàng NCC")
                     else:
-                        status = _("PO da tao")
+                        status = _("PO đã tạo")
                 else:
-                    status = _("Cho tao PO NCC")
+                    status = _("Chờ tạo PO NCC")
             elif line.fulfillment_method == "internal":
                 if line.store_receipt_picking_id and line.store_receipt_picking_id.state == "done":
-                    status = _("Cua hang da nhan hang")
+                    status = _("Cửa hàng đã nhận hàng")
                 elif (
                     line.internal_flow_state == "rejected"
                     or (line.internal_picking_id and line.internal_picking_id.wm_qc_status == "rejected")
                     or (line.store_receipt_picking_id and line.store_receipt_picking_id.wm_qc_status == "rejected")
                 ):
-                    status = _("Hang loi")
+                    status = _("Hàng lỗi")
                 elif line.internal_flow_state == "ready_delivery":
                     status = _("\u0110\u1ee7 h\u00e0ng, ch\u1edd x\u00e1c nh\u1eadn giao")
                 elif line.internal_flow_state == "waiting_store_receipt":
-                    status = _("Cho cua hang nhan va QC")
+                    status = _("Chờ cửa hàng nhận và QC")
                 elif line.internal_flow_state == "waiting_delivery":
-                    status = _("Cho Kho tong giao hang")
+                    status = _("Chờ Kho tổng giao hàng")
                 elif line.internal_flow_state == "waiting_stock":
-                    status = _("Kho tong chua du hang de giao")
+                    status = _("Kho tổng chưa đủ hàng để giao")
                 elif line.internal_flow_state == "pending_check":
-                    status = _("Cho Kho tong kiem hang de giao")
+                    status = _("Chờ Kho tổng kiểm hàng để giao")
                 elif line.internal_flow_state == "delivered":
-                    status = _("Cua hang da nhan hang")
+                    status = _("Cửa hàng đã nhận hàng")
                 else:
-                    status = _("Chua chuyen sang Kho tong")
+                    status = _("Chưa chuyển sang Kho tổng")
             line.route_status_display = status
 
             line.route_status_display = status

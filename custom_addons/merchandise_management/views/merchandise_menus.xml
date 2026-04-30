@@ -3,6 +3,7 @@
     <menuitem id="menu_merchandise_root"
               name="Merchandise"
               web_icon="purchase,static/description/icon.png"
+              groups="merchandise_management.group_merchandise_user"
               sequence="10"/>
 
     <menuitem id="purchase.menu_purchase_root" active="False"/>
@@ -55,19 +56,29 @@
     <menuitem id="menu_merchandise_discrepancy"
               name="Báo cáo sai lệch"
               parent="menu_merchandise_root"
+              groups="merchandise_management.group_merchandise_user"
               sequence="20"/>
 
     <menuitem id="menu_merchandise_discrepancy_lack"
               name="Báo cáo thiếu hàng"
               parent="menu_merchandise_discrepancy"
               action="action_mer_discrepancy_report_shortage"
+              groups="merchandise_management.group_merchandise_user"
               sequence="1"/>
 
     <menuitem id="menu_merchandise_discrepancy_excess"
               name="Báo cáo nhận dư hàng"
               parent="menu_merchandise_discrepancy"
               action="action_mer_discrepancy_report_overage"
+              groups="merchandise_management.group_merchandise_user"
               sequence="2"/>
+
+    <menuitem id="menu_merchandise_discrepancy_damaged"
+              name="Báo cáo hàng lỗi"
+              parent="menu_merchandise_discrepancy"
+              action="action_mer_discrepancy_report_damaged"
+              groups="merchandise_management.group_merchandise_user"
+              sequence="3"/>
 
     <menuitem id="menu_merchandise_products"
               name="Sản phẩm"

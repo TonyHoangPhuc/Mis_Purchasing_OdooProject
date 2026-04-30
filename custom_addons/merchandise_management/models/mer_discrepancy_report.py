@@ -21,16 +21,21 @@ class MerDiscrepancyReport(models.Model):
     
     purchase_id = fields.Many2one('purchase.order', string='Đơn mua hàng liên quan')
     replenishment_po_id = fields.Many2one('purchase.order', string='PO bù hàng', readonly=True, tracking=True)
+    replenishment_request_id = fields.Many2one('mer.purchase.request', string='PR bù hàng', readonly=True, tracking=True)
+    picking_id = fields.Many2one('stock.picking', string='Phiếu kho gốc', readonly=True)
     return_picking_id = fields.Many2one('stock.picking', string='Phiếu thu hồi', readonly=True, tracking=True)
+    submitted_to_merchandise = fields.Boolean(string='Đã gửi Merchandise', default=False)
     
     product_id = fields.Many2one('product.product', string='Sản phẩm sai lệch', required=True)
     expected_qty = fields.Float(string='Số lượng theo chứng từ')
     actual_qty = fields.Float(string='Số lượng nhận thực tế')
+    damaged_qty = fields.Float(string='Số lượng lỗi', default=0.0)
     difference_qty = fields.Float(string='Chênh lệch', compute='_compute_difference', store=True)
     
     reason = fields.Selection([
         ('overage', 'Hàng dư'),
-        ('shortage', 'Hàng thiếu')
+        ('shortage', 'Hàng thiếu'),
+        ('damaged', 'Hàng lỗi')
     ], string='Lý do', required=True)
     
     solution_notes = fields.Text(string='Phương án giải quyết')
@@ -177,6 +182,64 @@ class MerDiscrepancyReport(models.Model):
             'res_model': 'purchase.order',
             'res_id': po.id,
             'view_mode': 'form',
+            'views': [(False, 'form')],
+            'target': 'current',
+        }
+
+    # Tạo PR bù hàng thiếu hoặc hàng lỗi
+    def action_create_replenishment_pr(self):
+        self.ensure_one()
+        if self.state != 'draft':
+            raise UserError(_("Bạn chỉ có thể tạo PR bù hàng khi báo cáo đang ở trạng thái Nháp."))
+        
+        if self.reason not in ('shortage', 'damaged'):
+            raise UserError(_("Chỉ có thể tạo PR bù hàng cho trường hợp Hàng thiếu hoặc Hàng lỗi."))
+        
+        if self.replenishment_request_id:
+            raise UserError(_("Báo cáo này đã tạo PR bù hàng trước đó."))
+
+        # Xác định số lượng cần bù
+        qty_to_order = abs(self.difference_qty) if self.reason == 'shortage' else self.damaged_qty
+        if qty_to_order <= 0:
+            raise UserError(_("Số lượng cần bù phải lớn hơn 0."))
+
+        # Lấy thông tin kho và công ty
+        warehouse = self.warehouse_id or self.picking_id.picking_type_id.warehouse_id
+        if not warehouse:
+            raise UserError(_("Không xác định được Cửa hàng liên quan để tạo PR."))
+
+        pr_vals = {
+            'warehouse_id': warehouse.id,
+            'origin': f"Bù {dict(self._fields['reason'].selection).get(self.reason)} - {self.name}",
+            'is_replenishment_from_discrepancy': True,
+            'source_discrepancy_report_id': self.id,
+            'line_ids': [(0, 0, {
+                'product_id': self.product_id.id,
+                'product_qty': qty_to_order,
+                'approved_qty': qty_to_order,
+                'fulfillment_method': 'supplier_central' if warehouse.mis_role == 'store' else 'supplier',
+            })]
+        }
+        
+        # Thử lấy Store ID nếu có
+        store = self.env['store.store'].search([('warehouse_id', '=', warehouse.id)], limit=1)
+        if store:
+            pr_vals['store_id'] = store.id
+
+        pr = self.env['mer.purchase.request'].sudo().create(pr_vals)
+        
+        self.write({
+            'replenishment_request_id': pr.id,
+            'state': 'done',
+            'solution_notes': f"Đã tự động xử lý: Tạo Yêu cầu mua hàng (PR) bù số lượng: {pr.name}"
+        })
+        
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'mer.purchase.request',
+            'res_id': pr.id,
+            'view_mode': 'form',
+            'views': [(False, 'form')],
             'target': 'current',
         }
 
@@ -313,5 +376,6 @@ class MerDiscrepancyReport(models.Model):
             'res_model': 'stock.picking',
             'res_id': new_picking.id,
             'view_mode': 'form',
+            'views': [(False, 'form')],
             'target': 'current',
         }

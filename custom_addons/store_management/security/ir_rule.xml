@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Các bộ lọc cho Cửa hàng (Store Warehouse) -->
+    
+    <record id="rule_stock_picking_store" model="ir.rule">
+        <field name="name">Cửa hàng: Chỉ xem phiếu giao nhận liên quan đến Cửa hàng</field>
+        <field name="model_id" ref="stock.model_stock_picking"/>
+        <field name="domain_force">[
+            '|', '|',
+            ('picking_type_id.warehouse_id.mis_role', '=', 'store'),
+            ('location_id.warehouse_id.mis_role', '=', 'store'),
+            ('location_dest_id.warehouse_id.mis_role', '=', 'store')
+        ]</field>
+        <field name="groups" eval="[(4, ref('store_management.group_store_user'))]"/>
+    </record>
+
+    <record id="rule_stock_move_store" model="ir.rule">
+        <field name="name">Cửa hàng: Chỉ xem chi tiết di chuyển liên quan đến Cửa hàng</field>
+        <field name="model_id" ref="stock.model_stock_move"/>
+        <field name="domain_force">[
+            '|', '|',
+            ('picking_type_id.warehouse_id.mis_role', '=', 'store'),
+            ('location_id.warehouse_id.mis_role', '=', 'store'),
+            ('location_dest_id.warehouse_id.mis_role', '=', 'store')
+        ]</field>
+        <field name="groups" eval="[(4, ref('store_management.group_store_user'))]"/>
+    </record>
+
+    <record id="rule_stock_move_line_store" model="ir.rule">
+        <field name="name">Cửa hàng: Chỉ xem dòng di chuyển liên quan đến Cửa hàng</field>
+        <field name="model_id" ref="stock.model_stock_move_line"/>
+        <field name="domain_force">[
+            '|', '|',
+            ('picking_type_id.warehouse_id.mis_role', '=', 'store'),
+            ('location_id.warehouse_id.mis_role', '=', 'store'),
+            ('location_dest_id.warehouse_id.mis_role', '=', 'store')
+        ]</field>
+        <field name="groups" eval="[(4, ref('store_management.group_store_user'))]"/>
+    </record>
+
+    <record id="rule_stock_quant_store" model="ir.rule">
+        <field name="name">Cửa hàng: Chỉ xem Tồn kho của Cửa hàng (và các vị trí trung chuyển, NCC, khách hàng)</field>
+        <field name="model_id" ref="stock.model_stock_quant"/>
+        <field name="domain_force">[
+            '|',
+            ('location_id.usage', '!=', 'internal'),
+            ('location_id.warehouse_id.mis_role', '=', 'store')
+        ]</field>
+        <field name="groups" eval="[(4, ref('store_management.group_store_user'))]"/>
+    </record>
+
+    <!-- Các bộ lọc cho Kho tổng (Central Warehouse) -->
+    
+    <record id="rule_stock_picking_central" model="ir.rule">
+        <field name="name">Kho tổng: Chỉ xem phiếu giao nhận liên quan đến Kho tổng</field>
+        <field name="model_id" ref="stock.model_stock_picking"/>
+        <field name="domain_force">[
+            '|', '|',
+            ('picking_type_id.warehouse_id.mis_role', '=', 'central'),
+            ('location_id.warehouse_id.mis_role', '=', 'central'),
+            ('location_dest_id.warehouse_id.mis_role', '=', 'central')
+        ]</field>
+        <field name="groups" eval="[(4, ref('warehouse_management.group_receiving_qc_user'))]"/>
+    </record>
+
+    <record id="rule_stock_move_central" model="ir.rule">
+        <field name="name">Kho tổng: Chỉ xem chi tiết di chuyển liên quan đến Kho tổng</field>
+        <field name="model_id" ref="stock.model_stock_move"/>
+        <field name="domain_force">[
+            '|', '|',
+            ('picking_type_id.warehouse_id.mis_role', '=', 'central'),
+            ('location_id.warehouse_id.mis_role', '=', 'central'),
+            ('location_dest_id.warehouse_id.mis_role', '=', 'central')
+        ]</field>
+        <field name="groups" eval="[(4, ref('warehouse_management.group_receiving_qc_user'))]"/>
+    </record>
+
+    <record id="rule_stock_move_line_central" model="ir.rule">
+        <field name="name">Kho tổng: Chỉ xem dòng di chuyển liên quan đến Kho tổng</field>
+        <field name="model_id" ref="stock.model_stock_move_line"/>
+        <field name="domain_force">[
+            '|', '|',
+            ('picking_type_id.warehouse_id.mis_role', '=', 'central'),
+            ('location_id.warehouse_id.mis_role', '=', 'central'),
+            ('location_dest_id.warehouse_id.mis_role', '=', 'central')
+        ]</field>
+        <field name="groups" eval="[(4, ref('warehouse_management.group_receiving_qc_user'))]"/>
+    </record>
+
+    <record id="rule_stock_quant_central" model="ir.rule">
+        <field name="name">Kho tổng: Chỉ xem Tồn kho của Kho tổng (và các vị trí trung chuyển, NCC, khách hàng)</field>
+        <field name="model_id" ref="stock.model_stock_quant"/>
+        <field name="domain_force">[
+            '|',
+            ('location_id.usage', '!=', 'internal'),
+            ('location_id.warehouse_id.mis_role', '=', 'central')
+        ]</field>
+        <field name="groups" eval="[(4, ref('warehouse_management.group_receiving_qc_user'))]"/>
+    </record>
+
+</odoo>

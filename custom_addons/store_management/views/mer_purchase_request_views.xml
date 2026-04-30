@@ -88,6 +88,12 @@
             </xpath>
 
             <xpath expr="//field[@name='manager_id']" position="after">
+                <field name="is_replenishment_from_discrepancy" invisible="1"/>
+                <field
+                    name="source_discrepancy_report_id"
+                    readonly="1"
+                    invisible="not is_replenishment_from_discrepancy"
+                />
                 <field name="internal_picking_count" readonly="1" invisible="internal_picking_count == 0"/>
                 <field name="purchase_order_count" readonly="1" invisible="purchase_order_count == 0"/>
                 <field name="can_create_processing" invisible="1"/>
@@ -153,6 +159,17 @@
                             <field name="central_on_hand_qty" string="Tồn thực tế kho tổng" readonly="1"/>
                             <field name="central_stock_value" string="Giá trị tồn kho" readonly="1" sum="Tổng tồn kho"/>
                             <field name="availability_breakdown" readonly="1" optional="hide"/>
+                            <field name="fulfillment_method" invisible="1"/>
+                            <field name="internal_flow_state" invisible="1"/>
+                            <field name="purchase_order_id" invisible="1"/>
+                            <field name="internal_picking_id" invisible="1"/>
+                            <button
+                                name="action_fallback_to_supplier"
+                                type="object"
+                                string="Chuyển sang mua NCC"
+                                class="btn-link"
+                                invisible="fulfillment_method != 'internal' or internal_flow_state != 'waiting_stock' or purchase_order_id or internal_picking_id"
+                            />
                             <button name="action_view_supply_stock" type="object" string="Xem tồn" class="btn-link"/>
                         </list>
                     </field>
@@ -174,6 +191,15 @@
                             <field name="availability_breakdown" readonly="1" optional="show"/>
                             <field name="internal_flow_state" readonly="1"/>
                             <field name="route_status_display" readonly="1"/>
+                            <field name="purchase_order_id" invisible="1"/>
+                            <field name="internal_picking_id" invisible="1"/>
+                            <button
+                                name="action_fallback_to_supplier"
+                                type="object"
+                                string="Chuyển sang mua NCC"
+                                class="btn-link"
+                                invisible="fulfillment_method != 'internal' or internal_flow_state != 'waiting_stock' or purchase_order_id or internal_picking_id"
+                            />
                         </list>
                     </field>
                 </page>

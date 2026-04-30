@@ -32,5 +32,5 @@ class StockMove(models.Model):
         for move in self:
             if move.wm_damaged_qty < 0:
                 raise ValidationError("Số lượng hư hỏng phải lớn hơn hoặc bằng 0.")
-            if move.wm_damaged_qty > move.quantity:
+            if move.quantity > 0 and move.wm_damaged_qty > move.quantity:
                 raise ValidationError("Số lượng hư hỏng không được lớn hơn số lượng thực nhận.")

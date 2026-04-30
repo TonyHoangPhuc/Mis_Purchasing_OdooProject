@@ -424,6 +424,7 @@ class StoreStore(models.Model):
             "res_model": "mer.purchase.request",
             "res_id": request.id,
             "view_mode": "form",
+            "views": [(False, "form")],
             "target": "current",
             "context": {
                 "from_store_menu": 1,
@@ -639,6 +640,7 @@ class StoreProductLine(models.Model):
             "res_model": "mer.purchase.request",
             "res_id": request.id,
             "view_mode": "form",
+            "views": [(False, "form")],
             "target": "current",
             "context": {
                 "from_store_menu": 1,
