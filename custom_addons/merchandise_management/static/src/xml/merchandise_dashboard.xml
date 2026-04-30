@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="utf-8"?>
+<templates xml:space="preserve">
+    <t t-name="merchandise_management.Dashboard">
+        <div class="o_merchandise_dashboard" style="padding: 24px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); min-height: 100vh;">
+            <t t-if="state.loading">
+                <div class="text-center py-5">
+                    <i class="fa fa-spinner fa-spin fa-3x text-primary"/>
+                    <p class="mt-3 text-muted">Đang tải dữ liệu Merchandise...</p>
+                </div>
+            </t>
+
+            <t t-else="">
+                <div class="d-flex flex-wrap align-items-start justify-content-between mb-4" style="gap: 16px;">
+                    <div>
+                        <h2 style="color: #111827; font-weight: 800; margin: 0;">Tổng quan Merchandise</h2>
+                        <p class="mb-0" style="color: #6b7280; font-size: 14px;">
+                            Quản lý toàn bộ yêu cầu PR và các đơn mua hàng trong một command center.
+                        </p>
+                    </div>
+                    <div class="d-flex flex-wrap" style="gap: 10px;">
+                        <button class="btn btn-outline-secondary" t-on-click="refreshDashboard">
+                            <i class="fa fa-refresh mr-2"/>Làm mới
+                        </button>
+                        <button class="btn btn-primary" t-on-click="openPOList">
+                            <i class="fa fa-shopping-cart mr-2"/>Xem tất cả đơn
+                        </button>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <t t-foreach="[
+                        ['draft', 'Nháp', 'fa-file-text-o', 'linear-gradient(135deg, #64748b 0%, #475569 100%)'],
+                        ['pending', 'Chờ duyệt', 'fa-clock-o', 'linear-gradient(135deg, #f59e0b 0%, #f97316 100%)'],
+                        ['processing', 'Đang xử lý', 'fa-truck', 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)'],
+                        ['done', 'Hoàn tất', 'fa-check-circle', 'linear-gradient(135deg, #10b981 0%, #34d399 100%)'],
+                        ['rejected', 'Từ chối', 'fa-ban', 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)'],
+                        ['qc_rejected', 'Lô hàng lỗi', 'fa-exclamation-triangle', 'linear-gradient(135deg, #ff0844 0%, #ff6a88 100%)']
+                    ]" t-as="card" t-key="card[0]">
+                        <div class="col-xl-2 col-lg-4 col-md-6 col-sm-6 mb-3">
+                            <div class="card border-0 shadow-sm h-100"
+                                 style="border-radius: 18px; cursor: pointer; overflow: hidden;"
+                                 t-on-click="() => this.onKpiClick(card[0])">
+                                <div class="card-body d-flex justify-content-between align-items-end"
+                                     t-attf-style="background: #{card[3]}; min-height: 132px; color: white;">
+                                    <div>
+                                        <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.88;">
+                                            <t t-esc="card[1]"/>
+                                        </div>
+                                        <div style="font-size: 34px; font-weight: 800; line-height: 1.1; margin-top: 8px;">
+                                            <t t-esc="state.kpi[card[0]] || 0"/>
+                                        </div>
+                                    </div>
+                                    <div style="font-size: 28px; opacity: 0.78;">
+                                        <i t-att-class="'fa ' + card[2]"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </div>
+                <div class="row g-4 mb-4">
+                    <div class="col-12 col-sm-6 col-lg-3 mb-3" t-on-click="openBudgetConfig" style="cursor: pointer;">
+                        <div class="card border-0 shadow-sm h-100" style="border-radius: 18px; background: white; padding: 20px;">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span style="font-size: 13px; color: #6b7280; font-weight: 600;">Ngân sách đã xài</span>
+                                <i class="fa fa-money text-success"/>
+                            </div>
+                            <h3 style="font-weight: 800; margin: 0; color: #111827;">
+                                <t t-esc="(state.kpi.budget_spent || 0).toLocaleString('vi-VN')"/> VNĐ
+                            </h3>
+                            <div class="mt-2" style="font-size: 11px; color: #94a3b8;">Trên tổng ngân sách <t t-esc="(state.kpi.budget_limit || 0).toLocaleString('vi-VN')"/></div>
+                            <div class="progress mt-3" style="height: 6px; border-radius: 3px; background-color: #f1f5f9;">
+                                <div class="progress-bar bg-success" role="progressbar" 
+                                     t-attf-style="width: #{state.kpi.budget_limit > 0 ? (state.kpi.budget_spent / state.kpi.budget_limit * 100) : 0}%" 
+                                     aria-valuenow="70" aria-valuemin="0" aria-valuemax="100"/>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-sm-6 col-lg-3 mb-3" t-on-click="openSKUList" style="cursor: pointer;">
+                        <div class="card border-0 shadow-sm h-100" style="border-radius: 18px; background: white; padding: 20px;">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span style="font-size: 13px; color: #6b7280; font-weight: 600;">Sản phẩm đang thiếu</span>
+                                <i class="fa fa-exclamation-triangle text-danger"/>
+                            </div>
+                            <h3 style="font-weight: 800; margin: 0; color: #ef4444;">
+                                <t t-esc="state.kpi.low_stock_count || 0"/> SKU
+                            </h3>
+                            <div class="mt-2" style="font-size: 11px; color: #94a3b8;">Cần lập PR bổ sung ngay.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-sm-6 col-lg-3 mb-3" t-on-click="openSKUList" style="cursor: pointer;">
+                        <div class="card border-0 shadow-sm h-100" style="border-radius: 18px; background: white; padding: 20px;">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span style="font-size: 13px; color: #6b7280; font-weight: 600;">SKU Mới / Xả hàng</span>
+                                <i class="fa fa-tag text-info"/>
+                            </div>
+                            <h3 style="font-weight: 800; margin: 0;">
+                                <span class="text-primary"><t t-esc="state.kpi.new_sku_count || 0"/></span> / 
+                                <span class="text-warning"><t t-esc="state.kpi.phase_out_count || 0"/></span>
+                            </h3>
+                            <div class="mt-2" style="font-size: 11px; color: #94a3b8;">Theo dõi vòng đời sản phẩm.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-sm-6 col-lg-3 mb-3" t-on-click="openVendorList" style="cursor: pointer;">
+                        <div class="card border-0 shadow-sm h-100" style="border-radius: 18px; background: white; padding: 20px;">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span style="font-size: 13px; color: #6b7280; font-weight: 600;">Hiệu quả NCC</span>
+                                <i class="fa fa-star text-warning"/>
+                            </div>
+                            <h3 style="font-weight: 800; margin: 0; color: #f59e0b;">
+                                TOP 5
+                            </h3>
+                            <div class="mt-2" style="font-size: 11px; color: #94a3b8;">Dựa trên điểm tin cậy thực tế.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-lg-8 mb-4">
+                        <div class="card border-0 shadow-sm h-100" style="border-radius: 20px;">
+                            <div class="card-header border-0 d-flex align-items-center justify-content-between"
+                                 style="background: transparent; padding: 20px 22px 8px;">
+                                <div>
+                                    <h5 style="margin: 0; font-weight: 800; color: #111827;">Pipeline PR</h5>
+                                    <div style="font-size: 13px; color: #6b7280;">Theo dõi nhanh luồng xử lý theo trạng thái.</div>
+                                </div>
+                                <button class="btn btn-sm btn-outline-primary" t-on-click="openPRPipeline">Xem màn PR</button>
+                            </div>
+                            <div class="card-body pt-2">
+                                <div style="display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px;">
+                                    <t t-foreach="['draft', 'submitted', 'to_approve', 'approved', 'po_created', 'done', 'rejected']" t-as="stateKey" t-key="stateKey">
+                                        <div style="min-width: 210px; flex-shrink: 0; background: #f8fafc; border-radius: 18px; padding: 12px;">
+                                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                                <div t-attf-style="color: #{getStateColor(stateKey)}; font-weight: 800; font-size: 13px;">
+                                                    <t t-esc="getStateLabel(stateKey)"/>
+                                                </div>
+                                                <span class="badge rounded-pill"
+                                                      t-attf-style="background: #{getStateColor(stateKey)}; color: white;">
+                                                    <t t-esc="getPipelineByState(stateKey).length"/>
+                                                </span>
+                                            </div>
+
+                                            <t t-if="getPipelineByState(stateKey).length === 0">
+                                                <div style="padding: 18px 10px; text-align: center; color: #94a3b8; font-size: 12px;">
+                                                    Chưa có PR
+                                                </div>
+                                            </t>
+
+                                            <t t-foreach="getPipelineByState(stateKey).slice(0, 4)" t-as="pr" t-key="pr.id">
+                                                <div class="card border-0 shadow-sm mb-2"
+                                                     style="cursor: pointer; border-radius: 14px; overflow: hidden;"
+                                                     t-on-click="() => this.openPRRecord(pr.id)">
+                                                    <div t-attf-style="height: 4px; background: #{getStateColor(stateKey)};"/>
+                                                    <div class="card-body" style="padding: 14px;">
+                                                        <div class="d-flex align-items-start justify-content-between mb-2">
+                                                            <div style="font-weight: 800; color: #111827; font-size: 14px;">
+                                                                <t t-esc="pr.name"/>
+                                                            </div>
+                                                            <span class="badge rounded-pill"
+                                                                  t-attf-style="background: #{getStateColor(stateKey)}20; color: #{getStateColor(stateKey)}; font-weight: 700;">
+                                                                <t t-esc="getStateLabel(stateKey)"/>
+                                                            </span>
+                                                        </div>
+                                                        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">
+                                                            <i class="fa fa-building-o mr-1"/> <t t-esc="pr.store"/>
+                                                        </div>
+                                                        <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                                                            <i class="fa fa-calendar mr-1"/> <t t-esc="pr.date"/>
+                                                        </div>
+                                                        <div style="font-size: 12px; color: #6b7280; margin-bottom: 10px;">
+                                                            <i class="fa fa-user-o mr-1"/> <t t-esc="pr.user"/>
+                                                        </div>
+                                                        <div class="d-flex flex-wrap" style="gap: 6px;">
+                                                            <span class="badge rounded-pill" style="background: #ede9fe; color: #6d28d9;">
+                                                                <i class="fa fa-shopping-cart mr-1"/> <t t-esc="pr.purchase_order_count || 0"/> Đơn PO
+                                                            </span>
+                                                            <t t-if="pr.internal_picking_count">
+                                                                <span class="badge rounded-pill" style="background: #dbeafe; color: #1d4ed8;">
+                                                                    <i class="fa fa-exchange mr-1"/> <t t-esc="pr.internal_picking_count"/> Điều chuyển
+                                                                </span>
+                                                            </t>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </t>
+                                        </div>
+                                    </t>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4 mb-4">
+                        <div class="card border-0 shadow-sm h-100" style="border-radius: 20px;">
+                            <div class="card-header border-0" style="background: transparent; padding: 20px 22px 10px;">
+                                <h5 style="margin: 0; font-weight: 800; color: #111827;">Hoạt động gần đây</h5>
+                                <div style="font-size: 13px; color: #6b7280;">Timeline cập nhật mới nhất của PR.</div>
+                            </div>
+                            <div class="card-body pt-0" style="max-height: 560px; overflow-y: auto;">
+                                <t t-if="state.activities.length === 0">
+                                    <div style="padding: 32px 12px; text-align: center; color: #94a3b8;">
+                                        Chưa có hoạt động gần đây
+                                    </div>
+                                </t>
+                                <t t-foreach="state.activities" t-as="activity" t-key="activity.id">
+                                    <div class="d-flex align-items-start"
+                                         style="gap: 12px; padding: 12px 0; border-bottom: 1px solid #eef2f7; cursor: pointer;"
+                                         t-on-click="() => this.openActivity(activity)">
+                                        <div t-attf-style="width: 10px; height: 10px; border-radius: 9999px; margin-top: 6px; background: #{activity.is_qc_reject ? '#ef4444' : '#10b981'}; flex-shrink: 0;"/>
+                                        <div style="min-width: 0;">
+                                            <div class="d-flex align-items-center justify-content-between" style="gap: 8px;">
+                                                <div style="font-size: 13px; font-weight: 700; color: #1f2937;">
+                                                    <t t-esc="activity.author"/>
+                                                </div>
+                                                <div style="font-size: 11px; color: #94a3b8; white-space: nowrap;">
+                                                    <t t-esc="activity.date_label"/>
+                                                </div>
+                                            </div>
+                                            <div style="font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;">
+                                                <t t-esc="stripHtml(activity.body_short)"/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </t>
+        </div>
+    </t>
+</templates>

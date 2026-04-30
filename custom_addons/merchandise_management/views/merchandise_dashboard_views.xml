@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="action_merchandise_dashboard" model="ir.actions.client">
+        <field name="name">Tổng quan</field>
+        <field name="tag">merchandise_dashboard</field>
+        <field name="context">{}</field>
+    </record>
+
+    <record id="view_mer_purchase_request_kanban" model="ir.ui.view">
+        <field name="name">mer.purchase.request.kanban</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state" default_order="date_request desc" sample="1">
+                <field name="name"/>
+                <field name="state"/>
+                <field name="date_request"/>
+                <field name="user_id"/>
+                <field name="warehouse_id"/>
+                <field name="purchase_order_count"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click #{record.state.raw_value == 'rejected' ? 'border-danger' : ''} #{record.state.raw_value == 'done' ? 'border-success' : ''}"
+                             style="border-radius: 14px; overflow: hidden;">
+                            <div t-attf-style="height: 4px; background: #{record.state.raw_value == 'draft' ? '#6b7280' : record.state.raw_value == 'submitted' ? '#f59e0b' : record.state.raw_value == 'to_approve' ? '#f97316' : record.state.raw_value == 'approved' ? '#3b82f6' : record.state.raw_value == 'po_created' ? '#8b5cf6' : record.state.raw_value == 'done' ? '#10b981' : '#ef4444'};"/>
+                            <div class="p-3">
+                                <div class="d-flex align-items-start justify-content-between mb-2">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                    <field name="state" widget="badge"
+                                        decoration-secondary="state == 'draft'"
+                                        decoration-warning="state == 'submitted' or state == 'to_approve'"
+                                        decoration-info="state == 'approved' or state == 'po_created'"
+                                        decoration-success="state == 'done'"
+                                        decoration-danger="state == 'rejected'"
+                                    />
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-building-o mr-1" title="Cửa hàng"/>
+                                    <field name="warehouse_id"/>
+                                </div>
+                                <div class="mb-2 text-muted">
+                                    <i class="fa fa-calendar mr-1" title="Ngày yêu cầu"/>
+                                    <field name="date_request" widget="date"/>
+                                </div>
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <field name="user_id" widget="many2one_avatar_user"/>
+                                    <span class="badge rounded-pill text-bg-light">
+                                        <i class="fa fa-shopping-cart mr-1" title="Số đơn PO"/> <field name="purchase_order_count"/> PO
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_search_enhanced" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.enhanced</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="warehouse_id"/>
+                <field name="user_id"/>
+                <filter name="my_pr" string="PR của tôi" domain="[('user_id','=',uid)]"/>
+                <filter name="draft" string="Nháp" domain="[('state','=','draft')]"/>
+                <filter name="pending" string="Chờ duyệt" domain="[('state','in',['submitted','to_approve'])]"/>
+                <filter name="processing" string="Đang xử lý" domain="[('state','in',['approved','po_created'])]"/>
+                <filter name="done" string="Hoàn tất" domain="[('state','=','done')]"/>
+                <filter name="rejected" string="Từ chối" domain="[('state','=','rejected')]"/>
+                <separator/>
+                <group>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'warehouse_id'}"/>
+                    <filter name="group_month" string="Tháng" domain="[]" context="{'group_by': 'date_request:month'}"/>
+                </group>
+                <searchpanel>
+                    <field name="state" icon="fa-tasks" enable_counters="1" select="multi"/>
+                    <field name="warehouse_id" icon="fa-building" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_mer_purchase_request" model="ir.actions.act_window">
+        <field name="name">Yêu cầu PR</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_kanban"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_enhanced"/>
+    </record>
+
+    <record id="action_mer_purchase_request_pending" model="ir.actions.act_window">
+        <field name="name">PR chờ duyệt</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_kanban"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_enhanced"/>
+        <field name="domain">[('state', 'in', ['submitted', 'to_approve'])]</field>
+        <field name="context">{'search_default_pending': 1}</field>
+    </record>
+
+    <record id="action_mer_purchase_request_processing" model="ir.actions.act_window">
+        <field name="name">PR đang xử lý</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_kanban"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_enhanced"/>
+        <field name="domain">[('state', 'in', ['approved', 'po_created'])]</field>
+        <field name="context">{'search_default_processing': 1}</field>
+    </record>
+
+    <record id="action_mer_purchase_request_done" model="ir.actions.act_window">
+        <field name="name">PR hoàn tất</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_kanban"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_enhanced"/>
+        <field name="domain">[('state', '=', 'done')]</field>
+        <field name="context">{'search_default_done': 1}</field>
+    </record>
+
+    <record id="view_mer_po_management_list" model="ir.ui.view">
+        <field name="name">mer.po.management.list</field>
+        <field name="model">purchase.order</field>
+        <field name="arch" type="xml">
+            <list string="Quản lý đơn mua hàng (PO)" default_order="date_order desc" sample="1">
+                <field name="name" string="PO#"/>
+                <field name="origin" string="PR gốc"/>
+                <field name="partner_id" string="Nhà CC"/>
+                <field name="date_order" string="Ngày đặt"/>
+                <field name="amount_total" string="Tổng tiền" widget="monetary"/>
+                <field name="state" string="Trạng thái PO" widget="badge" optional="hide"
+                    decoration-warning="state == 'draft' or state == 'sent'"
+                    decoration-success="state == 'purchase' or state == 'done'"
+                    decoration-danger="state == 'cancel'"
+                />
+                <field name="currency_id" invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_po_management_search" model="ir.ui.view">
+        <field name="name">mer.po.management.search</field>
+        <field name="model">purchase.order</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" string="PO#"/>
+                <field name="origin" string="PR gốc"/>
+                <field name="partner_id" string="Nhà CC"/>
+                <filter name="confirmed" string="Đã xác nhận" domain="[('state','in',['purchase','done'])]"/>
+                <separator/>
+                <group>
+                    <filter name="group_origin" string="PR gốc" domain="[]" context="{'group_by': 'origin'}"/>
+                    <filter name="group_vendor" string="Nhà cung cấp" domain="[]" context="{'group_by': 'partner_id'}"/>
+                    <filter name="group_month" string="Tháng" domain="[]" context="{'group_by': 'date_order:month'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_mer_po_management" model="ir.actions.act_window">
+        <field name="name">Quản lý PO</field>
+        <field name="res_model">purchase.order</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_po_management_list"/>
+        <field name="search_view_id" ref="view_mer_po_management_search"/>
+        <field name="domain">[('origin', 'like', 'PR/')]</field>
+        <field name="context">{'search_default_confirmed': 1}</field>
+    </record>
+
+</odoo>

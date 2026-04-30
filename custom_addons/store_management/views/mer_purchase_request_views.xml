@@ -1,0 +1,529 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_purchase_request_form_inherit_store" model="ir.ui.view">
+        <field name="name">mer.purchase.request.form.inherit.store</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_purchase_request_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_confirm_central_stock"
+                    type="object"
+                    string="Kiểm hàng để giao"
+                    class="oe_highlight"
+                    invisible="not context.get('central_check_menu') or (pending_central_check_count == 0 and insufficient_stock_count == 0) or state not in ['approved', 'po_created']"
+                />
+            </xpath>
+
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_confirm_central_stock_ready"
+                    type="object"
+                    string="Xác nhận đủ hàng"
+                    class="btn-success"
+                    invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or state not in ['approved', 'po_created']"
+                />
+            </xpath>
+
+            <xpath expr="//header" position="inside">
+                <button
+                    name="action_create_po"
+                    type="object"
+                    string="Tạo Purchase Order"
+                    class="btn-success"
+                    invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or state not in ['approved']"
+                />
+            </xpath>
+
+            <xpath expr="//button[@name='action_submit']" position="attributes">
+                <attribute name="invisible">context.get('central_check_menu') or (context.get('from_store_menu') and state != 'draft') or (not context.get('from_store_menu') and state != 'draft')</attribute>
+            </xpath>
+
+            <xpath expr="//button[@name='action_send_to_manager']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'submitted'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_approve']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state != 'to_approve'</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_reject']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['submitted', 'to_approve']</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_create_po']" position="attributes">
+                <attribute name="string">Khởi tạo xử lý</attribute>
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['approved', 'po_created'] or not can_create_processing</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_draft']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['rejected', 'cancel']</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_cancel']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or context.get('central_check_menu') or state not in ['draft', 'submitted']</attribute>
+            </xpath>
+
+            <xpath expr="//button[@name='action_create_po']" position="attributes">
+                <attribute name="string">Khởi tạo PO</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_done']" position="attributes">
+                <attribute name="invisible">store_id or context.get('central_check_menu') or state not in ['approved', 'po_created']</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='warehouse_id']" position="before">
+                <field
+                    name="store_id"
+                    options="{'no_create_edit': False}"
+                    readonly="context.get('from_store_menu') and state != 'draft'"
+                />
+            </xpath>
+            <xpath expr="//field[@name='warehouse_id']" position="attributes">
+                <attribute name="string">Kho cửa hàng</attribute>
+                <attribute name="readonly">context.get('from_store_menu') or state != 'draft'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='partner_id']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//field[@name='date_request']" position="attributes">
+                <attribute name="readonly">context.get('from_store_menu') and state != 'draft'</attribute>
+            </xpath>
+            <xpath expr="//field[@name='notes']" position="attributes">
+                <attribute name="readonly">context.get('from_store_menu') and state != 'draft'</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='manager_id']" position="after">
+                <field name="is_replenishment_from_discrepancy" invisible="1"/>
+                <field
+                    name="source_discrepancy_report_id"
+                    readonly="1"
+                    invisible="not is_replenishment_from_discrepancy"
+                />
+                <field name="internal_picking_count" readonly="1" invisible="internal_picking_count == 0"/>
+                <field name="purchase_order_count" readonly="1" invisible="purchase_order_count == 0"/>
+                <field name="can_create_processing" invisible="1"/>
+                <field name="internal_line_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="pending_central_check_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="ready_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="waiting_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="insufficient_stock_count" readonly="1" invisible="not context.get('central_check_menu')"/>
+                <field name="central_flow_status" readonly="1" invisible="not context.get('central_check_menu')"/>
+            </xpath>
+
+            <xpath expr="//group[@class='oe_subtotal_footer oe_right']" position="replace">
+                <group class="oe_subtotal_footer oe_right">
+                    <field name="amount_total" string="Tổng tiền dự kiến" widget="monetary" readonly="1" decoration-bf="1"/>
+                </group>
+            </xpath>
+
+            <xpath expr="//page[@name='lines']/field[@name='line_ids']" position="replace">
+                <field name="line_ids" readonly="state != 'draft'">
+                    <list editable="bottom">
+                        <field name="product_id"/>
+                        <field name="product_qty" string="Số lượng yêu cầu"/>
+                        <field name="product_uom_id" readonly="1"/>
+                        <field name="price_unit" string="Đơn giá dự kiến"/>
+                        <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
+                    </list>
+                </field>
+            </xpath>
+
+            <xpath expr="//page[@name='lines']" position="after">
+                <page string="Phương án xử lý" name="fulfillment" invisible="context.get('from_store_menu')">
+                    <field name="line_ids" nolabel="1" readonly="state not in ['submitted', 'to_approve']">
+                        <list editable="bottom" create="0" delete="0">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="approved_qty" string="Số lượng được duyệt"/>
+                            <field name="product_uom_id" readonly="1"/>
+                            <field name="fulfillment_method"/>
+                            <field name="source_warehouse_id" invisible="fulfillment_method not in ['internal', 'supplier_central']"/>
+                            <field name="source_available_qty" string="Tồn thực tế kho nguồn" readonly="1" invisible="fulfillment_method != 'internal'"/>
+                            <field
+                                name="supplier_id"
+                                invisible="fulfillment_method not in ['supplier', 'supplier_central']"
+                                domain="[('category_id.name', '=', 'NCC')]"
+                                context="{'only_supplier_contacts': True}"
+                            />
+                            <field name="price_unit" string="Đơn giá"/>
+                            <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
+                            <field name="route_status_display" readonly="1"/>
+                            <field name="internal_picking_id" readonly="1" optional="show"/>
+                            <field name="purchase_order_id" readonly="1" optional="show"/>
+                        </list>
+                    </field>
+                </page>
+                <page string="Phân tích tồn kho" name="availability" invisible="context.get('from_store_menu')">
+                    <field name="line_ids" nolabel="1" readonly="1">
+                        <list create="0" delete="0">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="store_on_hand_qty" string="Tồn tại Cửa hàng" readonly="1" decoration-danger="x_demand_status == 'low'" decoration-warning="x_demand_status == 'high'" decoration-success="x_demand_status == 'normal'"/>
+                            <field name="price_unit" string="Đơn giá" readonly="1"/>
+                            <field name="price_subtotal" string="Thành tiền mua" readonly="1" sum="Tổng tiền mua"/>
+                            <field name="central_on_hand_qty" string="Tồn thực tế kho tổng" readonly="1"/>
+                            <field name="central_stock_value" string="Giá trị tồn kho" readonly="1" sum="Tổng tồn kho"/>
+                            <field name="x_demand_status" widget="badge" decoration-warning="x_demand_status == 'high'" decoration-danger="x_demand_status == 'stopped' or x_demand_status == 'low'" decoration-success="x_demand_status == 'normal'"/>
+                            <field name="availability_breakdown" readonly="1" optional="hide"/>
+                            <field name="fulfillment_method" invisible="1"/>
+                            <field name="internal_flow_state" invisible="1"/>
+                            <field name="purchase_order_id" invisible="1"/>
+                            <field name="internal_picking_id" invisible="1"/>
+                            <button
+                                name="action_fallback_to_supplier"
+                                type="object"
+                                string="Chuyển sang mua NCC"
+                                class="btn-link"
+                                invisible="fulfillment_method != 'internal' or internal_flow_state != 'waiting_stock' or purchase_order_id or internal_picking_id"
+                            />
+                            <button name="action_view_supply_stock" type="object" string="Xem tồn" class="btn-link"/>
+                            <button name="action_mer_stop_ordering" type="object" string="Dừng đặt hàng" class="btn-link text-danger" invisible="x_demand_status == 'stopped'" confirm="Bạn muốn dừng đặt hàng sản phẩm này từ Nhà cung cấp và hủy dòng này trong PR?"/>
+                            <button name="action_mer_reactivate_ordering" type="object" string="Mở lại đặt hàng" class="btn-link text-success" invisible="x_demand_status != 'stopped'" confirm="Bạn muốn mở lại đặt hàng cho sản phẩm này?"/>
+                        </list>
+                    </field>
+                </page>
+                <page string="Kiểm hàng Kho tổng" name="central_check" invisible="not context.get('central_check_menu')">
+                    <field name="line_ids" nolabel="1" readonly="1">
+                        <list create="0" delete="0">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="approved_qty" string="Số lượng được duyệt" readonly="1"/>
+                            <field name="price_unit" string="Đơn giá" readonly="1"/>
+                            <field name="price_subtotal" string="Thành tiền" readonly="1" sum="Tổng tiền"/>
+                            <field name="fulfillment_method" readonly="1"/>
+                            <field name="source_warehouse_id" readonly="1"/>
+                            <field name="central_on_hand_qty" string="Tồn thực tế kho tổng" readonly="1"/>
+                            <field name="source_available_qty" string="Tồn thực tế kho nguồn" readonly="1"/>
+                            <field name="remaining_after_dispatch_qty" readonly="1"/>
+                            <field name="stock_ready_to_dispatch" readonly="1"/>
+                            <field name="availability_breakdown" readonly="1" optional="show"/>
+                            <field name="internal_flow_state" readonly="1"/>
+                            <field name="route_status_display" readonly="1"/>
+                            <field name="purchase_order_id" invisible="1"/>
+                            <field name="internal_picking_id" invisible="1"/>
+                            <button
+                                name="action_fallback_to_supplier"
+                                type="object"
+                                string="Chuyển sang mua NCC"
+                                class="btn-link"
+                                invisible="fulfillment_method != 'internal' or internal_flow_state != 'waiting_stock' or purchase_order_id or internal_picking_id"
+                            />
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_tree_inherit_store" model="ir.ui.view">
+        <field name="name">mer.purchase.request.tree.inherit.store</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_purchase_request_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='warehouse_id']" position="before">
+                <field name="store_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_tree_central_check" model="ir.ui.view">
+        <field name="name">mer.purchase.request.tree.central.check</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <list default_order="date_request desc" sample="1">
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="date_request"/>
+                <field name="internal_line_count"/>
+                <field name="pending_central_check_count"/>
+                <field name="waiting_delivery_count"/>
+                <field name="insufficient_stock_count"/>
+                <field name="central_flow_status"/>
+                <button
+                    name="action_confirm_central_stock"
+                    type="object"
+                    string="Kiểm hàng để giao"
+                    class="btn-link"
+                    invisible="pending_central_check_count == 0 and insufficient_stock_count == 0"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_search_central_check" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.central.check</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <filter
+                    name="pending_central_check"
+                    string="Chờ kiểm để giao"
+                    domain="[('line_ids.fulfillment_method', 'in', ['internal', 'supplier_central']), ('line_ids.internal_flow_state', 'in', ['pending_check', 'waiting_stock'])]"
+                />
+                <filter
+                    name="waiting_stock"
+                    string="Chưa đủ hàng"
+                    domain="[('line_ids.fulfillment_method', 'in', ['internal', 'supplier_central']), ('line_ids.internal_flow_state', '=', 'waiting_stock')]"
+                />
+                <filter
+                    name="waiting_delivery"
+                    string="Chờ Supply Chain giao"
+                    domain="[('line_ids.fulfillment_method', 'in', ['internal', 'supplier_central']), ('line_ids.internal_flow_state', '=', 'waiting_delivery')]"
+                />
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_status" string="Trạng thái Kho tổng" domain="[]" context="{'group_by': 'central_flow_status'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_store_pr_kanban" model="ir.ui.view">
+        <field name="name">mer.purchase.request.store.kanban</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state" default_order="date_request desc" sample="1">
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="date_request"/>
+                <field name="create_uid"/>
+                <field name="state"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click
+                            #{ record.state.raw_value == 'done' ? 'border-success' : '' }
+                            #{ record.state.raw_value == 'cancel' ? 'border-secondary' : '' }
+                            #{ record.state.raw_value in ['submitted','to_approve'] ? 'border-warning' : '' }
+                            #{ record.state.raw_value == 'po_created' ? 'border-primary' : '' }">
+                            <div class="o_kanban_record_top mb4">
+                                <div class="o_kanban_record_headings">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                </div>
+                                <div>
+                                    <field name="state" widget="badge"
+                                        decoration-secondary="state == 'draft'"
+                                        decoration-warning="state == 'submitted' or state == 'to_approve'"
+                                        decoration-info="state == 'approved'"
+                                        decoration-primary="state == 'po_created'"
+                                        decoration-success="state == 'done'"
+                                        decoration-danger="state == 'cancel'"
+                                    />
+                                </div>
+                            </div>
+                            <div class="o_kanban_record_body">
+                                <div class="d-flex align-items-center mb4">
+                                    <i class="fa fa-building-o mr4 text-muted" title="Cửa hàng"/>
+                                    <field name="store_id" class="text-muted"/>
+                                </div>
+                                <div class="d-flex align-items-center mb4">
+                                    <i class="fa fa-calendar mr4 text-muted" title="Ngày yêu cầu"/>
+                                    <field name="date_request" widget="date" class="text-muted"/>
+                                </div>
+                            </div>
+                            <div class="o_kanban_record_bottom mt8">
+                                <div class="oe_kanban_bottom_left">
+                                    <field name="create_uid" widget="many2one_avatar_user"/>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="view_store_pr_search" model="ir.ui.view">
+        <field name="name">mer.purchase.request.store.search</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_id"/>
+                <filter name="my_pr" string="PR của tôi" domain="[('create_uid','=',uid)]"/>
+                <filter name="draft" string="Nháp" domain="[('state','=','draft')]"/>
+                <filter name="processing" string="Đang xử lý" domain="[('state','in',['submitted','to_approve','approved','po_created'])]"/>
+                <filter name="done" string="Hoàn tất" domain="[('state','=','done')]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_date" string="Ngày yêu cầu" domain="[]" context="{'group_by': 'date_request:month'}"/>
+                </group>
+                <searchpanel>
+                    <field name="store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="state" icon="fa-tasks" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_store_purchase_requests" model="ir.actions.act_window">
+        <field name="name">Gửi yêu cầu PR</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="domain">[('store_id', '!=', False)]</field>
+        <field name="context">{'from_store_menu': 1}</field>
+        <field name="search_view_id" ref="view_store_pr_search"/>
+    </record>
+
+    <record id="action_central_stock_requests" model="ir.actions.act_window">
+        <field name="name">Đơn cần kiểm hàng</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_tree_central_check"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_central_check"/>
+        <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created']), ('line_ids.fulfillment_method', 'in', ['internal', 'supplier_central']), ('line_ids.internal_flow_state', 'in', ['pending_check', 'waiting_stock'])]</field>
+        <field name="context">{'central_check_menu': 1, 'from_store_menu': 1}</field>
+    </record>
+
+    <record id="view_mer_purchase_request_tree_order_management" model="ir.ui.view">
+        <field name="name">mer.purchase.request.tree.order.management</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <list default_order="date_request desc" sample="1">
+                <field name="name" string="PR"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="date_request"/>
+                <field name="purchase_order_count" string="Số PO"/>
+                <field name="internal_picking_count" string="Số đơn nội bộ"/>
+                <field name="central_flow_status" string="Trạng thái kho tổng"/>
+                <field
+                    name="state"
+                    widget="badge"
+                    decoration-info="state == 'approved'"
+                    decoration-warning="state == 'po_created'"
+                    decoration-success="state == 'done'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_search_order_management" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.order.management</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="state"/>
+                <filter name="processing_requests" string="Đang xử lý" domain="[('state', 'in', ['approved', 'po_created'])]"/>
+                <filter name="done_requests" string="Hoàn tất" domain="[('state', '=', 'done')]"/>
+                <filter name="has_supplier_po" string="Có PO NCC" domain="[('line_ids.purchase_order_id', '!=', False)]"/>
+                <filter name="has_internal_transfer" string="Có đơn nội bộ" domain="[('line_ids.internal_picking_id', '!=', False)]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="warehouse_management.action_merchandise_purchase_orders" model="ir.actions.act_window">
+        <field name="name">Quản lý đơn mua hàng ( PO )</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_tree_order_management"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_order_management"/>
+        <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created', 'done'])]</field>
+        <field name="context">{'search_default_processing_requests': 1}</field>
+    </record>
+
+    <record id="view_mer_purchase_request_pipeline_kanban" model="ir.ui.view">
+        <field name="name">mer.purchase.request.pipeline.kanban</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state" default_order="date_request desc" sample="1">
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="date_request"/>
+                <field name="create_uid"/>
+                <field name="state"/>
+                <field name="purchase_order_count"/>
+                <templates>
+                    <t t-name="card">
+                        <div t-attf-class="oe_kanban_global_click #{record.state.raw_value == 'done' ? 'border-success' : ''} #{record.state.raw_value == 'rejected' ? 'border-danger' : ''}"
+                             style="border-radius: 16px; overflow: hidden;">
+                            <div t-attf-style="height: 4px; background: #{record.state.raw_value == 'draft' ? '#6b7280' : record.state.raw_value == 'submitted' ? '#f59e0b' : record.state.raw_value == 'to_approve' ? '#f97316' : record.state.raw_value == 'approved' ? '#3b82f6' : record.state.raw_value == 'po_created' ? '#8b5cf6' : record.state.raw_value == 'done' ? '#10b981' : '#ef4444'};"/>
+                            <div class="p-3">
+                                <div class="d-flex align-items-start justify-content-between mb-2">
+                                    <strong class="o_kanban_record_title">
+                                        <field name="name"/>
+                                    </strong>
+                                    <field name="state" widget="badge"
+                                        decoration-secondary="state == 'draft'"
+                                        decoration-warning="state == 'submitted' or state == 'to_approve'"
+                                        decoration-info="state == 'approved'"
+                                        decoration-primary="state == 'po_created'"
+                                        decoration-success="state == 'done'"
+                                        decoration-danger="state == 'rejected'"
+                                    />
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-building-o mr-1" title="Cửa hàng"/>
+                                    <field name="store_id"/>
+                                </div>
+                                <div class="mb-1 text-muted">
+                                    <i class="fa fa-calendar mr-1" title="Ngày yêu cầu"/>
+                                    <field name="date_request" widget="date"/>
+                                </div>
+                                <div class="mb-3 text-muted">
+                                    <i class="fa fa-user-o mr-1" title="Người yêu cầu"/>
+                                    <field name="create_uid"/>
+                                </div>
+                                <div class="d-flex flex-wrap" style="gap: 6px;">
+                                    <span class="badge rounded-pill text-bg-light">
+                                        <i class="fa fa-shopping-cart mr-1" title="Đơn PO"/> <field name="purchase_order_count"/> Đơn PO
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_request_search_pipeline" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.pipeline</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="store_id"/>
+                <field name="warehouse_id"/>
+                <field name="state"/>
+                <filter name="draft" string="Nháp" domain="[('state','=','draft')]"/>
+                <filter name="submitted" string="Đã gửi" domain="[('state','=','submitted')]"/>
+                <filter name="to_approve" string="Chờ duyệt" domain="[('state','=','to_approve')]"/>
+                <filter name="approved" string="Đã duyệt" domain="[('state','=','approved')]"/>
+                <filter name="processing" string="Đang xử lý" domain="[('state','=','po_created')]"/>
+                <filter name="done" string="Hoàn tất" domain="[('state','=','done')]"/>
+                <separator/>
+                <group>
+                    <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
+                    <filter name="group_state" string="Trạng thái" domain="[]" context="{'group_by': 'state'}"/>
+                    <filter name="group_date" string="Ngày yêu cầu" domain="[]" context="{'group_by': 'date_request:month'}"/>
+                </group>
+                <searchpanel>
+                    <field name="store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="state" icon="fa-tasks" enable_counters="1" select="multi"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_mer_purchase_request_pipeline" model="ir.actions.act_window">
+        <field name="name">Yêu cầu PR</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="view_mer_purchase_request_pipeline_kanban"/>
+        <field name="search_view_id" ref="view_mer_purchase_request_search_pipeline"/>
+        <field name="domain">[('store_id', '!=', False)]</field>
+        <field name="context">{'search_default_processing': 1}</field>
+    </record>
+</odoo>

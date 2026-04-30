@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_partner_form_inherit_merchandise" model="ir.ui.view">
+        <field name="name">res.partner.form.inherit.merchandise</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Hiệu quả Merchandise" name="mer_performance">
+                    <group>
+                        <group string="Chỉ số tin cậy">
+                            <field name="mer_reliability_score" widget="progressbar"/>
+                            <field name="mer_rating" widget="badge" decoration-success="mer_rating == 'excellent'" decoration-info="mer_rating == 'good'" decoration-warning="mer_rating == 'average'" decoration-danger="mer_rating == 'poor'"/>
+                        </group>
+                        <group string="Thống kê giao dịch">
+                            <field name="mer_total_po_count"/>
+                            <field name="mer_total_discrepancy_count" decoration-danger="mer_total_discrepancy_count > 0"/>
+                        </group>
+                    </group>
+                    <div class="alert alert-warning" role="alert" invisible="mer_reliability_score >= 50">
+                        <i class="fa fa-warning mr-2"/> <b>Cảnh báo:</b> Nhà cung cấp này có tỷ lệ sai lệch hàng hóa cao. Vui lòng cân nhắc khi đặt hàng số lượng lớn.
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

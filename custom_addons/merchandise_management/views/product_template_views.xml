@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Form: Cấu hình Merchandise -->
+    <record id="product_template_form_view_merchandise_inherit" model="ir.ui.view">
+        <field name="name">product.template.form.inherit.merchandise</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='options']" position="inside">
+                <span class="d-inline-block">
+                    <field name="x_mer_stop_ordering"/>
+                    <label for="x_mer_stop_ordering"/>
+                </span>
+            </xpath>
+            <xpath expr="//page[@name='general_information']//group" position="after">
+                <group string="Quản trị Merchandise" name="merchandise_info" invisible="context.get('from_store_menu')">
+                    <group>
+                        <field name="x_mer_sku_lifecycle" widget="radio"/>
+                        <field name="x_mer_abc_classification" widget="radio" options="{'horizontal': true}"/>
+                    </group>
+                    <group>
+                        <field name="current_promotion_price" widget="monetary" invisible="current_promotion_price == 0" class="text-success" string="Giá khuyến mãi"/>
+                        <field name="x_mer_stop_ordering" widget="boolean_toggle"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

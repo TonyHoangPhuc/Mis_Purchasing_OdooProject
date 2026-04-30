@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Form View: Ghi nhận và xử lý sai lệch hàng hóa -->
+    <record id="view_mer_discrepancy_report_form" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.form</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="arch" type="xml">
+            <form string="Báo cáo sai lệch hàng hóa">
+                <header>
+                    <button name="action_create_replenishment_pr" string="Tạo PR bù hàng" type="object" class="btn-primary" invisible="reason not in ('shortage', 'damaged') or replenishment_request_id or state != 'draft'"/>
+                    <button name="action_create_replenishment_po" string="Tạo PO bù hàng" type="object" invisible="reason != 'shortage' or replenishment_po_id or state != 'draft'"/>
+                    <button name="action_create_return_picking" string="Tạo phiếu thu hồi" type="object" invisible="reason != 'overage' or return_picking_id or state != 'draft'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="date_discrepancy" string="Ngày ghi nhận"/>
+                            <field name="warehouse_id" string="Cửa hàng" required="1"/>
+                            <field name="user_id" string="Người báo cáo" readonly="1"/>
+                            <field name="reason" string="Lý do"/>
+                        </group>
+                        <group>
+                            <field name="purchase_id" string="Đơn PO gốc"/>
+                            <field name="picking_id" string="Phiếu kho gốc" invisible="not picking_id"/>
+                            <field name="replenishment_request_id" string="PR bù hàng" invisible="not replenishment_request_id"/>
+                            <field name="replenishment_po_id" string="PO bù hàng" invisible="not replenishment_po_id"/>
+                            <field name="return_picking_id" string="Phiếu thu hồi" invisible="not return_picking_id"/>
+                        </group>
+                    </group>
+                    <group string="Chi tiết sai lệch">
+                        <group>
+                            <field name="product_id" string="Sản phẩm"/>
+                            <field name="expected_qty" string="Số lượng chứng từ"/>
+                        </group>
+                        <group>
+                            <field name="actual_qty" string="Số lượng thực tế"/>
+                            <field name="damaged_qty" string="Số lượng lỗi" invisible="reason != 'damaged'"/>
+                            <field name="difference_qty" string="Chênh lệch"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Phương án giải quyết" name="solution">
+                            <field name="solution_notes" placeholder="Nhập chi tiết phương án giải quyết/chỉ đạo..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- List View: Danh sách các báo cáo sai lệch -->
+    <record id="view_mer_discrepancy_report_tree" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.list</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="arch" type="xml">
+            <list string="Báo cáo sai lệch hàng hóa" sample="1">
+                <field name="name" string="Mã báo cáo" decoration-bf="1"/>
+                <field name="date_discrepancy" string="Ngày ghi nhận"/>
+                <field name="warehouse_id" string="Cửa hàng"/>
+                <field name="product_id" string="Sản phẩm"/>
+                <field name="damaged_qty" string="SL lỗi" optional="show"/>
+                <field name="reason" string="Lý do" widget="badge" decoration-danger="reason == 'shortage'" decoration-success="reason == 'overage'" decoration-warning="reason == 'damaged'"/>
+                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'draft'" decoration-success="state == 'done'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Action: Điều hướng đến màn hình báo cáo sai lệch -->
+    <record id="action_mer_discrepancy_report" model="ir.actions.act_window">
+        <field name="name">Báo cáo sai lệch</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Ghi nhận các trường hợp sai lệch hàng hóa.
+            </p>
+        </field>
+    </record>
+    <record id="action_mer_discrepancy_report_shortage" model="ir.actions.act_window">
+        <field name="name">Báo cáo thiếu hàng</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'shortage')]</field>
+        <field name="context">{'default_reason': 'shortage'}</field>
+    </record>
+
+    <record id="action_mer_discrepancy_report_overage" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận dư hàng</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'overage')]</field>
+        <field name="context">{'default_reason': 'overage'}</field>
+    </record>
+
+    <record id="action_mer_discrepancy_report_damaged" model="ir.actions.act_window">
+        <field name="name">Báo cáo hàng lỗi</field>
+        <field name="res_model">mer.discrepancy.report</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('reason', '=', 'damaged')]</field>
+        <field name="context">{'default_reason': 'damaged'}</field>
+    </record>
+</odoo>

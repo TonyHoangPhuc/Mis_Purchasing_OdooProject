@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_picking_form_inherit_warehouse_management" model="ir.ui.view">
+        <field name="name">stock.picking.form.inherit.warehouse.management</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <field
+                    name="wm_qc_status"
+                    widget="statusbar"
+                    statusbar_visible="draft,checking,passed,rejected"
+                    invisible="not wm_is_incoming_receipt"
+                />
+                <button
+                    name="action_start_qc"
+                    type="object"
+                    string="Bắt đầu QC"
+                    class="oe_highlight"
+                    groups="warehouse_management.group_receiving_qc_user"
+                    invisible="not wm_is_incoming_receipt or wm_qc_status != 'draft' or state == 'cancel'"
+                />
+                <button
+                    name="action_qc_pass"
+                    type="object"
+                    string="QC đạt"
+                    class="btn-success"
+                    groups="warehouse_management.group_receiving_qc_user"
+                    invisible="not wm_is_incoming_receipt or wm_qc_status != 'checking' or state == 'cancel'"
+                />
+                <button
+                    name="action_qc_reject"
+                    type="object"
+                    string="QC không đạt"
+                    class="btn-danger"
+                    groups="warehouse_management.group_receiving_qc_manager"
+                    invisible="not wm_is_incoming_receipt or wm_qc_status != 'checking' or state == 'cancel'"
+                />
+            </xpath>
+
+            <xpath expr="//button[@name='button_validate'][1]" position="attributes">
+                <attribute name="invisible">state in ('draft', 'confirmed', 'done', 'cancel') or (wm_is_incoming_receipt and wm_qc_status != 'passed')</attribute>
+            </xpath>
+            <xpath expr="//button[@name='button_validate'][2]" position="attributes">
+                <attribute name="invisible">state in ('waiting', 'assigned', 'done', 'cancel') or (wm_is_incoming_receipt and wm_qc_status != 'passed')</attribute>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Kiểm tra chất lượng nhập kho" invisible="not wm_is_incoming_receipt">
+                    <group>
+                        <group string="Tổng quan phiếu nhập">
+                            <field name="wm_expected_qty" readonly="1"/>
+                            <field name="wm_received_qty" readonly="1"/>
+                            <field name="wm_damaged_qty" readonly="1"/>
+                            <field name="wm_discrepancy_qty" readonly="1"/>
+                            <field name="wm_has_discrepancy" readonly="1"/>
+                        </group>
+                        <group string="Kết quả QC">
+                            <field name="wm_qc_checked_by" readonly="1"/>
+                            <field name="wm_qc_checked_on" readonly="1"/>
+                            <field name="wm_qc_note" placeholder="Nhập ghi chú kiểm tra, mô tả lỗi hoặc nội dung chênh lệch..."/>
+                        </group>
+                    </group>
+                    <field
+                        name="move_ids"
+                        nolabel="1"
+                        readonly="state == 'done' or state == 'cancel' or wm_qc_status in ['passed', 'rejected']"
+                    >
+                        <list editable="bottom" create="false" delete="false">
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_uom_qty" string="Số lượng dự kiến"/>
+                            <field name="quantity" string="Số lượng thực nhận"/>
+                            <field name="wm_damaged_qty"/>
+                            <field name="wm_damage_note" placeholder="Ghi chú lỗi"/>
+                            <field name="wm_line_discrepancy_qty" readonly="1"/>
+                            <field name="product_uom" optional="hide"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_receiving_qc_tree" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.tree</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <list default_order="scheduled_date desc" sample="1">
+                <field name="name" decoration-bf="1"/>
+                <field name="partner_id"/>
+                <field name="scheduled_date"/>
+                <field name="state" widget="badge" decoration-info="state == 'assigned'" decoration-success="state == 'done'" decoration-warning="state in ['confirmed', 'waiting']"/>
+                <field name="wm_qc_status" widget="badge" decoration-success="wm_qc_status == 'passed'" decoration-danger="wm_qc_status == 'rejected'" decoration-warning="wm_qc_status == 'checking'"/>
+                <field name="wm_expected_qty" sum="Tổng dự kiến"/>
+                <field name="wm_received_qty" sum="Tổng nhận"/>
+                <field name="wm_damaged_qty" sum="Tổng lỗi"/>
+                <field name="wm_discrepancy_qty" sum="Tổng lệch"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_receiving_qc_search" model="ir.ui.view">
+        <field name="name">stock.picking.receiving.qc.search</field>
+        <field name="model">stock.picking</field>
+        <field name="arch" type="xml">
+            <search string="QC phiếu nhập">
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="wm_qc_status"/>
+                <filter name="incoming_only" string="Phiếu nhập" domain="[('picking_type_code', '=', 'incoming')]"/>
+                <filter name="qc_checking" string="Đang kiểm tra" domain="[('wm_qc_status', '=', 'checking')]"/>
+                <filter name="qc_rejected" string="Hàng lỗi" domain="[('wm_qc_status', '=', 'rejected')]"/>
+                <filter name="has_discrepancy" string="Có chênh lệch" domain="[('wm_has_discrepancy', '=', True)]"/>
+                <separator/>
+                <group>
+                    <filter name="group_vendor" string="Nhà cung cấp" domain="[]" context="{'group_by': 'partner_id'}"/>
+                    <filter name="group_qc_status" string="Trạng thái QC" domain="[]" context="{'group_by': 'wm_qc_status'}"/>
+                    <filter name="group_state" string="Trạng thái phiếu" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_receiving_qc" model="ir.actions.act_window">
+        <field name="name">QC phiếu nhập</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_receiving_qc_tree"/>
+        <field name="search_view_id" ref="view_receiving_qc_search"/>
+        <field name="domain">[('picking_type_code', '=', 'incoming')]</field>
+        <field name="context">{'search_default_incoming_only': 1}</field>
+    </record>
+
+    <menuitem
+        id="menu_warehouse_root"
+        name="Warehouse"
+        sequence="25"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+
+    <menuitem
+        id="menu_receiving_qc"
+        name="Receiving QC"
+        parent="stock.menu_stock_warehouse_mgmt"
+        action="warehouse_management.action_receiving_qc"
+        sequence="10"
+        groups="warehouse_management.group_receiving_qc_user"
+    />
+</odoo>

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_excess_receipt_list" model="ir.ui.view">
+        <field name="name">mer.excess.receipt.list</field>
+        <field name="model">mer.excess.receipt</field>
+        <field name="arch" type="xml">
+            <list string="Báo cáo nhận dư hàng" sample="1">
+                <field name="name" decoration-bf="1"/>
+                <field name="picking_id" optional="show"/>
+                <field name="store_id" optional="show"/>
+                <field name="source_route_label" string="Nguồn phát sinh" optional="show"/>
+                <field name="date_report" string="Ngày báo cáo"/>
+                <field name="expected_qty" sum="Tổng dự kiến"/>
+                <field name="actual_qty" sum="Tổng thực tế"/>
+                <field name="discrepancy_qty" sum="Tổng dư" decoration-danger="discrepancy_qty > 0" decoration-bf="discrepancy_qty > 0"/>
+                <field name="handling_status" string="Tình trạng"/>
+                <field name="state" widget="badge" 
+                    decoration-info="state == 'reported'" 
+                    decoration-success="state == 'approved' or state == 'done'"
+                    decoration-warning="state == 'returning'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_excess_receipt_form" model="ir.ui.view">
+        <field name="name">mer.excess.receipt.form</field>
+        <field name="model">mer.excess.receipt</field>
+        <field name="arch" type="xml">
+            <form string="Báo cáo nhận dư hàng">
+                <header>
+                    <button name="action_submit" string="Gửi Merchandise" type="object" class="oe_highlight" invisible="state != 'draft'" groups="store_management.group_store_user"/>
+                    
+                    <button name="action_merchandise_approve" string="Phê duyệt &amp; Hiệu chỉnh kho" type="object" class="oe_highlight" 
+                            invisible="state != 'reported'" groups="merchandise_management.group_merchandise_user"/>
+                    
+                    <button name="action_create_recovery_picking" string="Tạo đơn thu hồi" type="object" class="oe_highlight" 
+                            invisible="state not in ['reported', 'approved']" groups="store_management.group_store_manager,warehouse_management.group_receiving_qc_user"/>
+                    
+                    <button name="action_done" string="Xác nhận Kho đã nhận hàng" type="object" class="oe_highlight" 
+                            invisible="state != 'returning'" groups="warehouse_management.group_receiving_qc_user"/>
+                    
+                    <field name="state" widget="statusbar" statusbar_visible="draft,reported,approved,returning,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name" string="Mã báo cáo" class="oe_edit_only"/>
+                        <h1>
+                            <field name="name" placeholder="Mới"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Tham chiếu" name="reference">
+                            <field name="picking_id" options="{'no_open': False}" readonly="state != 'draft'"/>
+                            <field name="store_id"/>
+                            <field name="source_route_label" readonly="1"/>
+                            <field name="product_id" options="{'no_open': True}" readonly="state != 'draft'"/>
+                        </group>
+                        <group string="Đối soát số lượng" name="quantities">
+                            <label for="expected_qty" string="Số lượng"/>
+                            <div class="o_row">
+                                <field name="expected_qty" readonly="state != 'draft'"/>
+                                <span class="mx-2">vs</span>
+                                <field name="actual_qty" readonly="state != 'draft'" class="oe_inline"/>
+                                <span class="text-danger fw-bold" invisible="discrepancy_qty == 0">
+                                    ( Dư: <field name="discrepancy_qty" class="oe_inline"/> )
+                                </span>
+                            </div>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Thông tin thu hồi" name="recovery">
+                            <group>
+                                <group>
+                                    <field name="recovery_picking_id" string="Phiếu điều chuyển thu hồi"/>
+                                    <field name="central_stock_adjusted" readonly="1"/>
+                                    <field name="source_location_id" readonly="1"/>
+                                    <field name="holding_location_id" readonly="1"/>
+                                    <field name="handling_status" readonly="1"/>
+                                </group>
+                                <group>
+                                    <field name="notes" placeholder="Nhập ghi chú tại đây..." readonly="state == 'done'"/>
+                                </group>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+
+    <record id="action_mer_excess_receipt" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận dư hàng</field>
+        <field name="res_model">mer.excess.receipt</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_excess_receipt_list"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Chưa có báo cáo nhận dư hàng nào.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_mer_excess_receipt_view_form" model="ir.actions.act_window.view">
+        <field name="sequence" eval="2"/>
+        <field name="view_mode">form</field>
+        <field name="view_id" ref="view_mer_excess_receipt_form"/>
+        <field name="act_window_id" ref="action_mer_excess_receipt"/>
+    </record>
+
+    <menuitem
+        id="menu_mer_excess_receipt"
+        name="Báo cáo nhận dư hàng"
+        parent="store_management.menu_store_receipts_pending"
+        action="action_mer_excess_receipt"
+        sequence="20"
+    />
+</odoo>

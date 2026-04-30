@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_delivery_discrepancy_wizard_form" model="ir.ui.view">
+        <field name="name">mer.delivery.discrepancy.wizard.form</field>
+        <field name="model">mer.delivery.discrepancy.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Kiểm hàng thực tế">
+                <sheet>
+                    <group>
+                        <field name="picking_id"/>
+                    </group>
+                    <field name="line_ids" nolabel="1">
+                        <list editable="bottom" create="0" delete="0">
+                            <field name="product_id" readonly="1" force_save="1" decoration-bf="1"/>
+                            <field name="expected_qty" readonly="1" force_save="1"/>
+                            <field name="actual_qty"/>
+                            <field name="damaged_qty"/>
+                            <field name="damage_note" invisible="damaged_qty &lt;= 0" required="damaged_qty &gt; 0"/>
+                        </list>
+                    </field>
+                </sheet>
+                <footer>
+                    <button name="action_process_qc" string="Xác nhận số lượng thực nhận" type="object" class="oe_highlight"/>
+                    <button string="Đóng" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_mer_delivery_discrepancy_wizard" model="ir.actions.act_window">
+        <field name="name">Kiểm hàng thực tế</field>
+        <field name="res_model">mer.delivery.discrepancy.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+</odoo>
