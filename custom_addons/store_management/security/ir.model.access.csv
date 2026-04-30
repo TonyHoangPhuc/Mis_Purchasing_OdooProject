@@ -3,6 +3,7 @@ access_store_store_user,store.store.user,model_store_store,store_management.grou
 access_store_store_manager,store.store.manager,model_store_store,store_management.group_store_manager,1,1,1,1
 access_store_product_line_user,store.product.line.user,model_store_product_line,store_management.group_store_user,1,1,1,0
 access_store_product_line_manager,store.product.line.manager,model_store_product_line,store_management.group_store_manager,1,1,1,1
+access_store_product_line_merchandise_user,store.product.line.merchandise.user,model_store_product_line,merchandise_management.group_merchandise_user,1,0,0,0
 access_mer_purchase_request_store_user,mer.purchase.request.store.user,merchandise_management.model_mer_purchase_request,store_management.group_store_user,1,1,1,0
 access_mer_purchase_request_line_store_user,mer.purchase.request.line.store.user,merchandise_management.model_mer_purchase_request_line,store_management.group_store_user,1,1,1,0
 access_mer_purchase_request_warehouse_user,mer.purchase.request.warehouse.user,merchandise_management.model_mer_purchase_request,warehouse_management.group_receiving_qc_user,1,1,0,0
