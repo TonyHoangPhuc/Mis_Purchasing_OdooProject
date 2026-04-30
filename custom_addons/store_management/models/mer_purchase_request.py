@@ -384,24 +384,70 @@ class MerPurchaseRequestLine(models.Model):
 
     def _compute_supply_metrics(self):
         for line in self:
-            # Tồn kho tổng: Lấy từ các kho có mis_role = 'central'
-            central_whs = self.env['stock.warehouse'].search([('mis_role','=','central')])
-            line.central_on_hand_qty = sum(line.product_id.with_context(warehouse=wh.id).qty_available for wh in central_whs)
-            line.central_available_qty = sum(line.product_id.with_context(warehouse=wh.id).virtual_available for wh in central_whs)
-            
-            # Tồn cửa hàng: Lấy từ kho đích của PR
-            line.store_on_hand_qty = line.product_id.with_context(warehouse=line.request_id.warehouse_id.id).qty_available
-            
-            # Khả dụng kho nguồn
-            source_wh = line.source_warehouse_id or self.env['stock.warehouse'].search([('mis_role','=','central')], limit=1)
-            line.source_available_qty = line.product_id.with_context(warehouse=source_wh.id).virtual_available if source_wh else 0.0
-            
-            # Chi tiết tồn kho
+            # Khởi tạo giá trị mặc định cho từng dòng
+            central_on_hand = 0.0
+            central_available = 0.0
+            store_on_hand = 0.0
+            source_available = 0.0
             breakdown = []
-            for wh in central_whs:
-                qty = line.product_id.with_context(warehouse=wh.id).qty_available
-                if qty > 0:
-                    breakdown.append(f"{wh.name}: {qty}")
+            
+            # Chỉ thực hiện tính toán nếu product_id đã có ID thực (kiểu số nguyên)
+            # Tránh lỗi khi Odoo tạo NewId cho các dòng nháp
+            product_id = line.product_id.id
+            if isinstance(product_id, int):
+                try:
+                    # 1. Tồn kho tổng: Vị trí chính của các kho 'central'
+                    central_whs = self.env['stock.warehouse'].search([('mis_role','=','central')])
+                    if central_whs:
+                        target_location_ids = central_whs.mapped('lot_stock_id').ids
+                        if target_location_ids:
+                            self.env.cr.execute("""
+                                SELECT SUM(quantity), SUM(quantity - reserved_quantity)
+                                FROM stock_quant
+                                WHERE product_id = %s AND location_id IN %s
+                            """, (product_id, tuple(target_location_ids)))
+                            res = self.env.cr.fetchone()
+                            if res:
+                                central_on_hand = res[0] if res[0] else 0.0
+                                central_available = res[1] if res[1] else 0.0
+
+                    # 2. Tồn cửa hàng: Vị trí kho chính (lot_stock_id) của cửa hàng
+                    target_location = line.request_id.warehouse_id.lot_stock_id
+                    if target_location:
+                        self.env.cr.execute("""
+                            SELECT SUM(quantity) FROM stock_quant 
+                            WHERE product_id = %s AND location_id = %s
+                        """, (product_id, target_location.id))
+                        res_store = self.env.cr.fetchone()
+                        store_on_hand = res_store[0] if res_store and res_store[0] else 0.0
+                    
+                    # 3. Khả dụng kho nguồn: Vị trí chính của kho nguồn
+                    source_wh = line.source_warehouse_id or central_whs[:1]
+                    if source_wh and source_wh.lot_stock_id:
+                        self.env.cr.execute("""
+                            SELECT SUM(quantity - reserved_quantity) FROM stock_quant 
+                            WHERE product_id = %s AND location_id = %s
+                        """, (product_id, source_wh.lot_stock_id.id))
+                        res_source = self.env.cr.fetchone()
+                        source_available = res_source[0] if res_source and res_source[0] else 0.0
+                    
+                    # 4. Chi tiết tồn kho
+                    if central_whs:
+                        for wh in central_whs:
+                            if wh.lot_stock_id:
+                                self.env.cr.execute("SELECT SUM(quantity) FROM stock_quant WHERE product_id = %s AND location_id = %s", (product_id, wh.lot_stock_id.id))
+                                res_qty = self.env.cr.fetchone()
+                                qty = res_qty[0] if res_qty and res_qty[0] else 0.0
+                                if qty > 0:
+                                    breakdown.append(f"{wh.name} ({wh.lot_stock_id.name}): {qty}")
+                except Exception:
+                    # Nếu có bất kỳ lỗi SQL nào, giữ nguyên giá trị 0
+                    pass
+
+            line.central_on_hand_qty = central_on_hand
+            line.central_available_qty = central_available
+            line.store_on_hand_qty = store_on_hand
+            line.source_available_qty = source_available
             line.availability_breakdown = " | ".join(breakdown)
             
             # Giá trị tồn: Tồn kho tổng * Giá vốn (standard_price)
