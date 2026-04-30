@@ -1,26 +1,27 @@
-# Sử dụng bản Odoo 19 chính thức làm chuẩn
+# Use the official Odoo image.
 FROM odoo:19.0
 
 USER root
 
-# Mở port 7860 cho Hugging Face
+# Hugging Face Spaces exposes the app on port 7860.
 EXPOSE 7860
 
-# Đưa thư mục custom module vào container
+# Copy custom modules into Odoo's extra addons path.
 COPY ./custom_addons /mnt/extra-addons
-
-# Cấp quyền cho user odoo
 RUN chown -R odoo:odoo /mnt/extra-addons
 
 USER odoo
 
-# Lệnh khởi chạy tối ưu
+# ODOO_MASTER_PASSWORD is the master password for Odoo's database manager.
+# Use this value on the "Create Database" screen. It is not the same as
+# DB_PASSWORD, which is only the PostgreSQL user's password.
 CMD odoo \
     --http-port=7860 \
-    --db_host=$DB_HOST \
-    --db_port=$DB_PORT \
-    --db_user=$DB_USER \
-    --db_password=$DB_PASSWORD \
+    --db_host=${DB_HOST} \
+    --db_port=${DB_PORT:-5432} \
+    --db_user=${DB_USER} \
+    --db_password=${DB_PASSWORD} \
+    --admin-passwd=${ODOO_MASTER_PASSWORD:-admin} \
     --proxy-mode \
     --db-filter=^OdooProjectV2$ \
     --limit-time-real=0 \

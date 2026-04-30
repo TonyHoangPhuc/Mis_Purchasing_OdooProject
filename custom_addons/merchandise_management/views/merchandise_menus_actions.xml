@@ -75,9 +75,4 @@
               action="action_mer_purchase_budget"
               sequence="1"/>
 
-    <menuitem id="menu_merchandise_store_stock"
-              name="Phân tích tồn kho Store"
-              parent="menu_merchandise_products"
-              action="store_management.action_store_product_lines"
-              sequence="20"/>
 </odoo>

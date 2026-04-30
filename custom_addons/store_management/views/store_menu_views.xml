@@ -52,6 +52,15 @@
         groups="store_management.group_store_user"
     />
 
+    <menuitem
+        id="menu_merchandise_store_stock"
+        name="Phân tích tồn kho Store"
+        parent="merchandise_management.menu_merchandise_products"
+        action="store_management.action_store_product_lines"
+        groups="merchandise_management.group_merchandise_user"
+        sequence="20"
+    />
+
     <record id="action_store_receipts_pending" model="ir.actions.act_window">
         <field name="name">Đơn chờ nhận và QC</field>
         <field name="res_model">stock.picking</field>

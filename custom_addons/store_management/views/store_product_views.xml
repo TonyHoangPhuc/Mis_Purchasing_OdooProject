@@ -94,9 +94,4 @@
         <field name="context">{'from_store_menu': 1}</field>
     </record>
 
-    <menuitem id="menu_store_product_lines"
-              name="Quản lý SKU (Dự báo)"
-              parent="store_management.menu_store_inventory_root"
-              action="action_store_product_lines"
-              sequence="20"/>
 </odoo>
