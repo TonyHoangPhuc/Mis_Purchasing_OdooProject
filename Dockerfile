@@ -22,7 +22,7 @@ CMD odoo \
     --db_user=$DB_USER \
     --db_password=$DB_PASSWORD \
     --proxy-mode \
-    --db-filter=^OdooProjectV2$ \
+    --db-filter=^OdooProjectV3$ \
     --limit-time-real=0 \
     --limit-time-cpu=0 \
     -d OdooProjectV2
