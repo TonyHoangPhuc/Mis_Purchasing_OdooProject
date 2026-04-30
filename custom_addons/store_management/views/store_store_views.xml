@@ -171,6 +171,8 @@
                                     <field name="available_qty" readonly="1"/>
                                     <field name="pending_replenishment_qty" readonly="1"/>
                                     <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
+                                    <field name="sales_velocity_30d" optional="show"/>
+                                    <field name="days_of_stock" widget="badge" decoration-danger="days_of_stock &lt; 7" decoration-warning="days_of_stock &lt; 14" decoration-success="days_of_stock >= 14" optional="show"/>
                                     <button
                                         name="action_create_replenishment_pr"
                                         type="object"
@@ -239,5 +241,6 @@
         <field name="res_model">store.store</field>
         <field name="view_mode">kanban,list,form,pivot</field>
         <field name="search_view_id" ref="view_store_store_search"/>
+        <field name="context">{'from_store_menu': 1}</field>
     </record>
 </odoo>

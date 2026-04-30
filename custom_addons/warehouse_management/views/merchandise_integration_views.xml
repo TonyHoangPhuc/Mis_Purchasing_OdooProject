@@ -39,14 +39,6 @@
         <field name="group_ids" eval="[(6, 0, [ref('merchandise_management.group_merchandise_user')])]"/>
     </record>
 
-    <record id="merchandise_management.menu_merchandise_products" model="ir.ui.menu">
-        <field name="active" eval="False"/>
-    </record>
-
-    <record id="merchandise_management.menu_merchandise_config" model="ir.ui.menu">
-        <field name="active" eval="False"/>
-    </record>
-
     <record id="purchase.menu_procurement_management" model="ir.ui.menu">
         <field name="active" eval="False"/>
     </record>

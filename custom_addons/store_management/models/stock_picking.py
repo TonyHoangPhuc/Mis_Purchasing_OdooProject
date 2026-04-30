@@ -469,6 +469,10 @@ class StockPicking(models.Model):
                 create_excess_report=False,
             )
             picking.store_receipt_issue_type = issue_type
+            
+            # Tự động bóp PO nếu có thiếu hàng để giải phóng ngân sách
+            if issue_type in ("shortage", "mixed"):
+                picking._adjust_po_quantities_to_actual()
 
             if issue_type in ("overage", "mixed"):
                 picking.message_post(
@@ -519,6 +523,7 @@ class StockPicking(models.Model):
                 skip_immediate=True,
                 skip_backorder=True,
                 cancel_backorder=True,
+                picking_ids_not_to_backorder=picking.ids,
             ).action_qc_pass()
 
         self._sync_related_mer_request_state()
@@ -633,7 +638,12 @@ class StockPicking(models.Model):
                 )
 
             # Xác nhận giao hàng thực tế
-            picking.with_context(skip_immediate=True).button_validate()
+            picking.with_context(
+                skip_immediate=True,
+                skip_backorder=True,
+                cancel_backorder=True,
+                picking_ids_not_to_backorder=picking.ids,
+            ).button_validate()
 
         self._sync_related_mer_request_state()
         return {
@@ -898,6 +908,45 @@ class StockPicking(models.Model):
         if has_overage:
             return "overage"
         return "none"
+    
+    def _adjust_po_quantities_to_actual(self):
+        """
+        Bóp (Adjust) số lượng trên PO khớp với thực nhận khi có thiếu hàng.
+        Điều này giúp giải phóng ngân sách ảo để Merchandise tạo PR/PO bù hàng mới.
+        """
+        from odoo.tools.float_utils import float_compare
+        for picking in self:
+            if not picking.purchase_id:
+                continue
+            
+            # Điều chỉnh nếu phiếu này được xác nhận là có thiếu hàng (shortage) hoặc hàng lỗi bị từ chối (damaged_rejected)
+            if picking.store_receipt_issue_type not in ('shortage', 'mixed', 'damaged_rejected'):
+                continue
+
+            for move in picking.move_ids.filtered(lambda m: m.state != 'cancel' and m.purchase_line_id):
+                po_line = move.purchase_line_id
+                
+                # So sánh số lượng thực nhận (quantity) với số lượng trên PO (product_qty)
+                comparison = float_compare(
+                    move.quantity,
+                    po_line.product_qty,
+                    precision_rounding=move.product_uom.rounding or 0.01,
+                )
+                
+                if comparison < 0:
+                    old_qty = po_line.product_qty
+                    try:
+                        # Dùng sudo vì nhân viên kho thường không có quyền sửa PO
+                        po_line.sudo().write({'product_qty': move.quantity})
+                        picking.message_post(
+                            body=_("<b>Điều chỉnh Ngân sách:</b> Đã tự động giảm số lượng PO line (%s) từ %s xuống %s để khớp với thực nhận, giúp giải phóng ngân sách cho đơn bù hàng.") % (
+                                move.product_id.display_name,
+                                old_qty,
+                                move.quantity
+                            )
+                        )
+                    except Exception as e:
+                        _logger.warning("Không thể tự động điều chỉnh PO line cho sản phẩm %s: %s", move.product_id.display_name, str(e))
 
     def _notify_merchandise_store_receipt_rejected(self):
         merch_users = self._get_merchandise_notification_users()
@@ -1012,6 +1061,8 @@ class StockPicking(models.Model):
                 "wm_qc_note": self.wm_qc_note or _("Từ chối toàn bộ lô giao do phát hiện hàng hư hỏng tại Cửa hàng."),
             }
         )
+        # Tự động bóp PO để hoàn lại ngân sách cho đơn bù hàng
+        self._adjust_po_quantities_to_actual()
         self.env["mer.purchase.request.line"].search(
             [("store_receipt_picking_id", "=", self.id)]
         ).with_context(store_skip_sync_rule=True).write({"internal_flow_state": "rejected"})
@@ -1071,6 +1122,8 @@ class StockPicking(models.Model):
                     "wm_qc_note": picking.wm_qc_note or _("Từ chối toàn bộ lô giao do phát hiện hàng hư hỏng tại Kho tổng."),
                 }
             )
+            # Tự động bóp PO để hoàn lại ngân sách cho đơn bù hàng
+            picking._adjust_po_quantities_to_actual()
             
             # Hủy các báo cáo Thiếu/Dư đã tạo trước đó vì toàn bộ lô đã bị từ chối
             self.env["mer.discrepancy.report"].search([
@@ -1145,6 +1198,10 @@ class StockPicking(models.Model):
             )
             picking.store_receipt_issue_type = issue_type
 
+            # Tự động bóp PO nếu có thiếu hàng để giải phóng ngân sách
+            if issue_type in ("shortage", "mixed"):
+                picking._adjust_po_quantities_to_actual()
+
             if picking.wm_received_qty <= 0:
                 picking.write(
                     {
@@ -1166,6 +1223,7 @@ class StockPicking(models.Model):
                 skip_immediate=True,
                 skip_backorder=True,
                 cancel_backorder=True,
+                picking_ids_not_to_backorder=picking.ids,
             ).action_qc_pass()
 
             if issue_type == "overage":
@@ -1213,7 +1271,12 @@ class StockPicking(models.Model):
             lambda picking: picking._is_store_receipt_for_qc() and picking.state not in ("done", "cancel")
         )
         if pickings_to_validate:
-            validate_result = pickings_to_validate.button_validate()
+            validate_result = pickings_to_validate.with_context(
+                skip_backorder=True,
+                cancel_backorder=True,
+                picking_ids_not_to_backorder=pickings_to_validate.ids,
+            ).button_validate()
+
             self._sync_related_mer_request_state()
             return validate_result or result
         self._sync_related_mer_request_state()

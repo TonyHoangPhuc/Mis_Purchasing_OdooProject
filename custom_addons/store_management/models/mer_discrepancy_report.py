@@ -124,12 +124,15 @@ class MerDiscrepancyReport(models.Model):
             raise UserError(_("Chỉ báo cáo đang ở trạng thái nháp mới được tạo PR bù hàng."))
         if not self.submitted_to_merchandise:
             raise UserError(_("Báo cáo cần được Cửa hàng gửi Merchandise trước khi tạo PR bù hàng."))
-        if self.reason != "shortage":
-            raise UserError(_("Chỉ có thể tạo PR bù hàng cho báo cáo thiếu hàng."))
+        if self.reason not in ("shortage", "damaged"):
+            raise UserError(_("Chỉ có thể tạo PR bù hàng cho báo cáo thiếu hàng hoặc hàng lỗi."))
         if self.replenishment_request_id:
             raise UserError(_("Báo cáo này đã tạo PR bù hàng trước đó."))
 
+        # Xác định số lượng cần bù: Luôn lấy giá trị chênh lệch (số lượng chưa vào kho)
+        # Ví dụ: Đặt 200, lỗi 1 -> Từ chối cả 200 -> Cần bù 200 (abs(difference_qty))
         qty_to_order = abs(self.difference_qty)
+
         if qty_to_order <= 0:
             raise UserError(_("Số lượng cần bù phải lớn hơn 0."))
 
@@ -171,10 +174,11 @@ class MerDiscrepancyReport(models.Model):
             {
                 "replenishment_request_id": request.id,
                 "solution_notes": _(
-                    "Đã tạo PR bù hàng %(request)s cho số lượng thiếu %(qty)s. PR cần đi qua luồng duyệt Merchandise trước khi tạo PO."
+                    "Đã tạo PR bù hàng %(request)s cho số lượng %(reason)s (%(qty)s cái). PR cần đi qua luồng duyệt Merchandise trước khi tạo PO."
                 )
                 % {
                     "request": request.name,
+                    "reason": _("thiếu") if self.reason == "shortage" else _("lỗi"),
                     "qty": qty_to_order,
                 },
             }

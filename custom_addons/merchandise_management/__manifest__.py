@@ -21,12 +21,15 @@
         'security/ir.model.access.csv',
         'data/ir_sequence_data.xml',
         'data/ir_cron_data.xml',
+        'views/merchandise_menus_root.xml',
         'views/product_template_views.xml',
         'views/merchandise_dashboard_views.xml',
         'views/mer_purchase_request_views.xml',
         'views/mer_promotion_views.xml',
         'views/mer_discrepancy_report_views.xml',
-        'views/merchandise_menus.xml',
+        'views/mer_budget_views.xml',
+        'views/res_partner_views.xml',
+        'views/merchandise_menus_actions.xml',
     ],
     'assets': {
         'web.assets_backend': [

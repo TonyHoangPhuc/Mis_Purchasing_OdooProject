@@ -26,6 +26,13 @@ class MerPurchaseRequestLine(models.Model):
     price_unit = fields.Float(string='Đơn giá dự kiến', digits='Product Price')
     price_subtotal = fields.Float(string='Thành tiền', compute='_compute_price_subtotal', store=True)
 
+    @api.onchange('product_id')
+    def _onchange_product_id(self):
+        if self.product_id:
+            self.product_uom_id = self.product_id.uom_id
+            # Lấy giá vốn của sản phẩm làm giá dự kiến ban đầu
+            self.price_unit = self.product_id.standard_price
+            
     @api.depends('product_qty', 'price_unit')
     def _compute_price_subtotal(self):
         for line in self:
@@ -77,11 +84,46 @@ class MerPurchaseRequest(models.Model):
     
     amount_total = fields.Float(string='Tổng tiền dự kiến', compute='_compute_amount_total', store=True)
     payment_term_id = fields.Many2one('account.payment.term', string='Điều khoản thanh toán')
-
+    
     @api.depends('line_ids.price_subtotal')
     def _compute_amount_total(self):
         for request in self:
             request.amount_total = sum(line.price_subtotal for line in request.line_ids)
+
+    x_mer_budget_info = fields.Html(string='Thông tin ngân sách', compute='_compute_x_mer_budget_info')
+
+    @api.depends('line_ids.price_subtotal', 'line_ids.product_id.categ_id')
+    def _compute_x_mer_budget_info(self):
+        for request in self:
+            cat_amounts = {}
+            for line in request.line_ids:
+                cat = line.product_id.categ_id
+                cat_amounts[cat] = cat_amounts.get(cat, 0.0) + line.price_subtotal
+            
+            html = "<div class='alert alert-light'>"
+            for cat, amount in cat_amounts.items():
+                if not cat:
+                    continue
+                budget = self.env['mer.purchase.budget'].search([
+                    ('category_id', '=', cat.id),
+                    ('state', '=', 'active'),
+                    ('date_from', '<=', fields.Date.today()),
+                    ('date_to', '>=', fields.Date.today()),
+                ], limit=1)
+                
+                status_color = "green"
+                if not budget:
+                    status_text = "Không có ngân sách thiết lập"
+                    status_color = "gray"
+                elif budget.remaining_amount < amount:
+                    status_text = "VƯỢT NGÂN SÁCH (Còn: {:,.0f})".format(budget.remaining_amount)
+                    status_color = "red"
+                else:
+                    status_text = "Trong tầm kiểm soát (Còn: {:,.0f})".format(budget.remaining_amount)
+                
+                html += f"<li><b>{cat.name}:</b> {status_text} <span style='color: {status_color};'>●</span></li>"
+            html += "</div>"
+            request.x_mer_budget_info = html if cat_amounts else False
     
     purchase_order_count = fields.Integer(
         string='Số PO',
@@ -200,6 +242,26 @@ class MerPurchaseRequest(models.Model):
 
     # Phê duyệt yêu cầu
     def action_approve(self):
+        for request in self:
+            # Kiểm tra ngân sách theo từng ngành hàng trong PR
+            cat_amounts = {}
+            for line in request.line_ids:
+                cat = line.product_id.categ_id
+                cat_amounts[cat] = cat_amounts.get(cat, 0.0) + line.price_subtotal
+            
+            for cat, amount in cat_amounts.items():
+                if not cat:
+                    continue
+                budget = self.env['mer.purchase.budget'].search([
+                    ('category_id', '=', cat.id),
+                    ('state', '=', 'active'),
+                    ('date_from', '<=', fields.Date.today()),
+                    ('date_to', '>=', fields.Date.today()),
+                ], limit=1)
+                if budget and budget.remaining_amount < amount:
+                    raise UserError(_("Vượt ngân sách ngành hàng '%s'! Ngân sách còn lại: %s, Yêu cầu: %s") % (
+                        cat.name, "{:,.0f}".format(budget.remaining_amount), "{:,.0f}".format(amount)))
+        
         self.write({'state': 'approved', 'manager_id': self.env.user.id})
 
     # Từ chối yêu cầu
@@ -226,6 +288,25 @@ class MerPurchaseRequest(models.Model):
         if not self.partner_id:
             raise UserError(_("Vui lòng chọn Nhà cung cấp trước khi tạo PO."))
 
+        # Lọc các dòng hợp lệ (Sản phẩm không bị dừng đặt hàng)
+        stopped_lines = self.line_ids.filtered(lambda l: l.product_id.x_mer_stop_ordering)
+        valid_lines = self.line_ids - stopped_lines
+        
+        if not valid_lines:
+            self.action_cancel()
+            msg = _("Tất cả sản phẩm trong yêu cầu đều đang dừng đặt hàng. Hệ thống đã tự động hủy yêu cầu này.")
+            self.message_post(body=msg)
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': _('Yêu cầu bị hủy'),
+                    'message': msg,
+                    'sticky': True,
+                    'type': 'danger',
+                }
+            }
+
         purchase_vals = {
             'partner_id': self.partner_id.id,
             'origin': self.name,
@@ -234,14 +315,11 @@ class MerPurchaseRequest(models.Model):
             'order_line': [],
         }
         
-        for line in self.line_ids:
-            if line.product_id.x_mer_stop_ordering:
-                raise UserError(_("Sản phẩm %s đang trong trạng thái dừng đặt hàng.") % line.product_id.name)
-                
+        for line in valid_lines:
             purchase_vals['order_line'].append((0, 0, {
                 'product_id': line.product_id.id,
                 'name': line.product_id.name,
-                'product_qty': line.product_qty,
+                'product_qty': line.approved_qty if hasattr(line, 'approved_qty') else line.product_qty,
                 'product_uom_id': line.product_uom_id.id,
                 'price_unit': line.price_unit,
                 'date_planned': fields.Datetime.now(),
@@ -252,6 +330,10 @@ class MerPurchaseRequest(models.Model):
         purchase_id.button_confirm()
         
         self.write({'state': 'done'})
+        
+        if stopped_lines:
+            stopped_names = ", ".join(stopped_lines.mapped('product_id.name'))
+            self.message_post(body=_("Lưu ý: Các sản phẩm sau đã bị bỏ qua do đang dừng đặt hàng: %s") % stopped_names)
 
         # Gửi thông báo Chatter cho bộ phận Kho
         if self.partner_id:

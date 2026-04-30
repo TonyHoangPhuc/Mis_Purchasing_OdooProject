@@ -78,6 +78,17 @@ class MerchandiseDashboard(models.AbstractModel):
                 }
             )
 
+        # New KPIs: Tài chính & Tồn kho
+        active_budgets = self.env['mer.purchase.budget'].search([('state', '=', 'active')])
+        total_budget_spent = sum(active_budgets.mapped('spent_amount'))
+        total_budget_limit = sum(active_budgets.mapped('budget_amount'))
+        
+        low_stock_count = self.env['store.product.line'].search_count([('needs_replenishment', '=', True)])
+        
+        # Thống kê SKU
+        new_sku_count = self.env['product.template'].search_count([('x_mer_sku_lifecycle', '=', 'new')])
+        phase_out_count = self.env['product.template'].search_count([('x_mer_sku_lifecycle', '=', 'phase_out')])
+
         return {
             "kpi": {
                 "draft": total_draft,
@@ -86,6 +97,11 @@ class MerchandiseDashboard(models.AbstractModel):
                 "done": total_done,
                 "rejected": total_rejected,
                 "qc_rejected": qc_rejected,
+                "budget_spent": total_budget_spent,
+                "budget_limit": total_budget_limit,
+                "low_stock_count": low_stock_count,
+                "new_sku_count": new_sku_count,
+                "phase_out_count": phase_out_count,
             },
             "pipeline": pipeline,
             "activities": activities,

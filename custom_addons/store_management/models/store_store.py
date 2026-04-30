@@ -1,3 +1,4 @@
+import datetime
 from collections import defaultdict
 
 from odoo import Command, api, fields, models, _
@@ -510,6 +511,17 @@ class StoreProductLine(models.Model):
         digits="Product Unit of Measure",
         compute="_compute_stock_metrics",
     )
+    sales_velocity_30d = fields.Float(
+        string="Tốc độ bán (30n)",
+        digits="Product Unit of Measure",
+        compute="_compute_stock_metrics",
+        help="Số lượng bán trung bình mỗi ngày trong 30 ngày qua.",
+    )
+    days_of_stock = fields.Float(
+        string="Ngày tồn dự kiến",
+        compute="_compute_stock_metrics",
+        help="Số ngày dự kiến hết hàng dựa trên tồn khả dụng và tốc độ bán.",
+    )
     needs_replenishment = fields.Boolean(
         string="Cần bổ sung hàng",
         compute="_compute_stock_metrics",
@@ -579,6 +591,27 @@ class StoreProductLine(models.Model):
             line.pending_replenishment_qty = pending_qty
             line.suggested_replenishment_qty = suggested_qty
             line.needs_replenishment = suggested_qty > 0
+
+            # --- NEW: Tính tốc độ bán và ngày tồn ---
+            today = fields.Date.today()
+            date_30d_ago = today - datetime.timedelta(days=30)
+            
+            # Lấy doanh số trong 30 ngày qua tại cửa hàng này cho sản phẩm này
+            # Note: optimize by doing this outside the loop if possible, but for now this is accurate
+            sales_lines = self.env['sale.order.line'].sudo().search([
+                ('product_id', '=', line.product_id.id),
+                ('order_id.store_id', '=', line.store_id.id),
+                ('order_id.state', 'in', ('sale', 'done')),
+                ('order_id.date_order', '>=', date_30d_ago)
+            ])
+            total_sold = sum(sales_lines.mapped('product_uom_qty'))
+            velocity = total_sold / 30.0
+            line.sales_velocity_30d = velocity
+            
+            if velocity > 0:
+                line.days_of_stock = available_qty / velocity
+            else:
+                line.days_of_stock = 999.0 if available_qty > 0 else 0.0
 
     @api.constrains("min_qty", "max_qty")
     def _check_qty_range(self):

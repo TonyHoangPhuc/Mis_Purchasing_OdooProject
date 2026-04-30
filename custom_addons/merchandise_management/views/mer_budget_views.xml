@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mer_purchase_budget_tree" model="ir.ui.view">
+        <field name="name">mer.purchase.budget.list</field>
+        <field name="model">mer.purchase.budget</field>
+        <field name="arch" type="xml">
+            <list string="Ngân sách Merchandise">
+                <field name="currency_id" column_invisible="True"/>
+                <field name="name"/>
+                <field name="category_id"/>
+                <field name="date_from"/>
+                <field name="date_to"/>
+                <field name="budget_amount" sum="Tổng ngân sách"/>
+                <field name="spent_amount" sum="Tổng đã xài"/>
+                <field name="remaining_amount" sum="Tổng còn lại" decoration-danger="remaining_amount &lt; 0" decoration-success="remaining_amount &gt; 0"/>
+                <field name="state" widget="badge" decoration-info="state == 'draft'" decoration-success="state == 'active'" decoration-muted="state == 'closed'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_mer_purchase_budget_form" model="ir.ui.view">
+        <field name="name">mer.purchase.budget.form</field>
+        <field name="model">mer.purchase.budget</field>
+        <field name="arch" type="xml">
+            <form string="Ngân sách Merchandise">
+                <header>
+                    <button name="action_activate" string="Kích hoạt" type="object" class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_close" string="Đóng ngân sách" type="object" invisible="state != 'active'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,active,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="Ví dụ: Ngân sách Thực phẩm - Tháng 04/2026"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="category_id" options="{'no_create': True}"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="budget_amount"/>
+                        </group>
+                        <group>
+                            <label for="date_from" string="Thời gian áp dụng"/>
+                            <div class="o_row">
+                                <field name="date_from" widget="daterange" options="{'related_end_date': 'date_to'}"/>
+                                <span>đến</span>
+                                <field name="date_to" widget="daterange" options="{'related_start_date': 'date_from'}"/>
+                            </div>
+                        </group>
+                    </group>
+                    <group string="Theo dõi sử dụng">
+                        <group>
+                            <field name="spent_amount"/>
+                            <field name="remaining_amount" decoration-bf="1" decoration-danger="remaining_amount &lt; 0" decoration-success="remaining_amount &gt; 0"/>
+                        </group>
+                        <group>
+                             <div class="alert alert-info" role="alert">
+                                <b>Hướng dẫn:</b> Ngân sách sẽ được tính dựa trên các Đơn mua hàng (PO) đã duyệt thuộc Ngành hàng này trong khoảng thời gian đã chọn.
+                            </div>
+                        </group>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_mer_purchase_budget" model="ir.actions.act_window">
+        <field name="name">Ngân sách mua hàng</field>
+        <field name="res_model">mer.purchase.budget</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+</odoo>

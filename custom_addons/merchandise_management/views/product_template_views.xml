@@ -12,12 +12,18 @@
                     <label for="x_mer_stop_ordering"/>
                 </span>
             </xpath>
-            <xpath expr="//field[@name='list_price']" position="after">
-                <field name="current_promotion_price" widget="monetary" invisible="current_promotion_price == 0" class="text-success" string="Giá khuyến mãi"/>
+            <xpath expr="//page[@name='general_information']//group" position="after">
+                <group string="Quản trị Merchandise" name="merchandise_info" invisible="context.get('from_store_menu')">
+                    <group>
+                        <field name="x_mer_sku_lifecycle" widget="radio"/>
+                        <field name="x_mer_abc_classification" widget="radio" options="{'horizontal': true}"/>
+                    </group>
+                    <group>
+                        <field name="current_promotion_price" widget="monetary" invisible="current_promotion_price == 0" class="text-success" string="Giá khuyến mãi"/>
+                        <field name="x_mer_stop_ordering" widget="boolean_toggle"/>
+                    </group>
+                </group>
             </xpath>
-
         </field>
     </record>
-
-
 </odoo>

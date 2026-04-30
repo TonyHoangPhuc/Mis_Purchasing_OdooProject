@@ -4,3 +4,5 @@ from . import mer_discrepancy_report
 from . import mer_promotion
 from . import mer_promotion_line
 from . import merchandise_dashboard
+from . import mer_budget
+from . import res_partner

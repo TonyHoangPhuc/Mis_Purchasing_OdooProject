@@ -275,7 +275,12 @@ class MerExcessReceipt(models.Model):
             for move in self.recovery_picking_id.move_ids:
                 move.quantity = move.product_uom_qty
             try:
-                self.recovery_picking_id.button_validate()
+                self.recovery_picking_id.with_context(
+                    skip_backorder=True,
+                    cancel_backorder=True,
+                    picking_ids_not_to_backorder=self.recovery_picking_id.ids,
+                ).button_validate()
+
             except Exception as e:
                 error_msg = str(e)
                 if "lô" in error_msg.lower() or "sê-ri" in error_msg.lower() or "lot" in error_msg.lower() or "serial" in error_msg.lower():

@@ -14,7 +14,12 @@
                 <field name="current_qty" readonly="1" widget="progressbar" options="{'current_value': 'current_qty', 'max_value': 'max_qty'}"/>
                 <field name="available_qty" readonly="1" optional="show"/>
                 <field name="pending_replenishment_qty" readonly="1" optional="show"/>
-                <field name="suggested_replenishment_qty" readonly="1" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
+                <field name="sales_velocity_30d" readonly="1" string="Tốc độ bán (30n)" optional="show" digits="[16, 2]"/>
+                <field name="days_of_stock" readonly="1" string="Ngày tồn" widget="badge" 
+                       decoration-danger="days_of_stock &lt; 7" 
+                       decoration-warning="days_of_stock &lt; 14" 
+                       decoration-success="days_of_stock &gt;= 14"/>
+                <field name="suggested_replenishment_qty" readonly="1" string="Đề xuất bổ sung" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
                 <button
                     name="action_create_replenishment_pr"
                     type="object"
@@ -46,6 +51,8 @@
                             <field name="current_qty" readonly="1"/>
                             <field name="available_qty" readonly="1"/>
                             <field name="pending_replenishment_qty" readonly="1"/>
+                            <field name="sales_velocity_30d" readonly="1"/>
+                            <field name="days_of_stock" readonly="1"/>
                             <field name="suggested_replenishment_qty" readonly="1"/>
                             <field name="active"/>
                         </group>
@@ -72,7 +79,7 @@
                     <filter name="group_category" string="Ngành hàng" domain="[]" context="{'group_by': 'categ_id'}"/>
                 </group>
                 <searchpanel>
-                    <field name="store_id" icon="fa-building" enable_counters="1" select="multi"/>
+                    <field name="store_id" icon="fa-building" enable_counters="1" select="multi" expand="1"/>
                     <field name="categ_id" icon="fa-tags" enable_counters="1" select="multi"/>
                 </searchpanel>
             </search>
@@ -84,6 +91,12 @@
         <field name="res_model">store.product.line</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_store_product_line_search"/>
-        <field name="context">{}</field>
+        <field name="context">{'from_store_menu': 1}</field>
     </record>
+
+    <menuitem id="menu_store_product_lines"
+              name="Quản lý SKU (Dự báo)"
+              parent="store_management.menu_store_inventory_root"
+              action="action_store_product_lines"
+              sequence="20"/>
 </odoo>

@@ -19,7 +19,7 @@
                 <button
                     name="action_confirm_central_stock_ready"
                     type="object"
-                    string="X&#225;c nh&#7853;n &#273;&#7911; h&#224;ng"
+                    string="Xác nhận đủ hàng"
                     class="btn-success"
                     invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or state not in ['approved', 'po_created']"
                 />
@@ -60,7 +60,7 @@
             </xpath>
 
             <xpath expr="//button[@name='action_create_po']" position="attributes">
-                <attribute name="string">Kh&#7903;i t&#7841;o PO</attribute>
+                <attribute name="string">Khởi tạo PO</attribute>
             </xpath>
             <xpath expr="//button[@name='action_done']" position="attributes">
                 <attribute name="invisible">store_id or context.get('central_check_menu') or state not in ['approved', 'po_created']</attribute>
@@ -103,7 +103,6 @@
                 <field name="waiting_delivery_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="insufficient_stock_count" readonly="1" invisible="not context.get('central_check_menu')"/>
                 <field name="central_flow_status" readonly="1" invisible="not context.get('central_check_menu')"/>
-
             </xpath>
 
             <xpath expr="//group[@class='oe_subtotal_footer oe_right']" position="replace">
@@ -126,7 +125,7 @@
 
             <xpath expr="//page[@name='lines']" position="after">
                 <page string="Phương án xử lý" name="fulfillment" invisible="context.get('from_store_menu')">
-                    <field name="line_ids" nolabel="1" readonly="state != 'submitted'">
+                    <field name="line_ids" nolabel="1" readonly="state not in ['submitted', 'to_approve']">
                         <list editable="bottom" create="0" delete="0">
                             <field name="product_id" readonly="1"/>
                             <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
@@ -154,10 +153,12 @@
                         <list create="0" delete="0">
                             <field name="product_id" readonly="1"/>
                             <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
+                            <field name="store_on_hand_qty" string="Tồn tại Cửa hàng" readonly="1" decoration-danger="x_demand_status == 'low'" decoration-warning="x_demand_status == 'high'" decoration-success="x_demand_status == 'normal'"/>
                             <field name="price_unit" string="Đơn giá" readonly="1"/>
                             <field name="price_subtotal" string="Thành tiền mua" readonly="1" sum="Tổng tiền mua"/>
                             <field name="central_on_hand_qty" string="Tồn thực tế kho tổng" readonly="1"/>
                             <field name="central_stock_value" string="Giá trị tồn kho" readonly="1" sum="Tổng tồn kho"/>
+                            <field name="x_demand_status" widget="badge" decoration-warning="x_demand_status == 'high'" decoration-danger="x_demand_status == 'stopped' or x_demand_status == 'low'" decoration-success="x_demand_status == 'normal'"/>
                             <field name="availability_breakdown" readonly="1" optional="hide"/>
                             <field name="fulfillment_method" invisible="1"/>
                             <field name="internal_flow_state" invisible="1"/>
@@ -171,6 +172,8 @@
                                 invisible="fulfillment_method != 'internal' or internal_flow_state != 'waiting_stock' or purchase_order_id or internal_picking_id"
                             />
                             <button name="action_view_supply_stock" type="object" string="Xem tồn" class="btn-link"/>
+                            <button name="action_mer_stop_ordering" type="object" string="Dừng đặt hàng" class="btn-link text-danger" invisible="x_demand_status == 'stopped'" confirm="Bạn muốn dừng đặt hàng sản phẩm này từ Nhà cung cấp và hủy dòng này trong PR?"/>
+                            <button name="action_mer_reactivate_ordering" type="object" string="Mở lại đặt hàng" class="btn-link text-success" invisible="x_demand_status != 'stopped'" confirm="Bạn muốn mở lại đặt hàng cho sản phẩm này?"/>
                         </list>
                     </field>
                 </page>
@@ -372,8 +375,9 @@
         <field name="view_id" ref="view_mer_purchase_request_tree_central_check"/>
         <field name="search_view_id" ref="view_mer_purchase_request_search_central_check"/>
         <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created']), ('line_ids.fulfillment_method', 'in', ['internal', 'supplier_central']), ('line_ids.internal_flow_state', 'in', ['pending_check', 'waiting_stock'])]</field>
-        <field name="context">{'central_check_menu': 1}</field>
+        <field name="context">{'central_check_menu': 1, 'from_store_menu': 1}</field>
     </record>
+
     <record id="view_mer_purchase_request_tree_order_management" model="ir.ui.view">
         <field name="name">mer.purchase.request.tree.order.management</field>
         <field name="model">mer.purchase.request</field>
@@ -427,15 +431,6 @@
         <field name="search_view_id" ref="view_mer_purchase_request_search_order_management"/>
         <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created', 'done'])]</field>
         <field name="context">{'search_default_processing_requests': 1}</field>
-    </record>
-
-    <record id="merchandise_management.menu_merchandise_purchase_orders" model="ir.ui.menu">
-        <field name="name">Quản lý đơn mua hàng ( PO )</field>
-        <field name="action" ref="warehouse_management.action_merchandise_purchase_orders"/>
-    </record>
-    <record id="merchandise_management.menu_merchandise_purchase_orders" model="ir.ui.menu">
-        <field name="name">Quản lý PO</field>
-        <field name="action" ref="merchandise_management.action_mer_po_management"/>
     </record>
 
     <record id="view_mer_purchase_request_pipeline_kanban" model="ir.ui.view">
@@ -530,9 +525,5 @@
         <field name="search_view_id" ref="view_mer_purchase_request_search_pipeline"/>
         <field name="domain">[('store_id', '!=', False)]</field>
         <field name="context">{'search_default_processing': 1}</field>
-    </record>
-
-    <record id="merchandise_management.menu_merchandise_requests" model="ir.ui.menu">
-        <field name="action" eval="False"/>
     </record>
 </odoo>

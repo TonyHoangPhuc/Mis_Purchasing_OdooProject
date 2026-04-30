@@ -11,3 +11,5 @@ access_mer_discrepancy_report_orderpoint,mer.discrepancy.report.orderpoint,stock
 access_mer_purchase_request_orderpoint,mer.purchase.request.orderpoint,stock.model_stock_warehouse_orderpoint,merchandise_management.group_merchandise_manager,1,0,0,0
 access_mer_promotion_line_user,mer.promotion.line.user,model_mer_promotion_line,merchandise_management.group_merchandise_user,1,1,1,1
 access_mer_promotion_line_manager,mer.promotion.line.manager,model_mer_promotion_line,merchandise_management.group_merchandise_manager,1,1,1,1
+access_mer_purchase_budget_user,mer.purchase.budget.user,model_mer_purchase_budget,merchandise_management.group_merchandise_user,1,1,1,1
+access_mer_purchase_budget_manager,mer.purchase.budget.manager,model_mer_purchase_budget,merchandise_management.group_merchandise_manager,1,1,1,1

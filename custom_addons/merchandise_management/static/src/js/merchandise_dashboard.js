@@ -108,6 +108,18 @@ export class MerchandiseDashboard extends Component {
         }
     }
 
+    openBudgetConfig() {
+        return this.action.doAction("merchandise_management.action_mer_purchase_budget");
+    }
+
+    openSKUList() {
+        return this.action.doAction("product.product_template_action_all");
+    }
+
+    openVendorList() {
+        return this.action.doAction("base.action_partner_form");
+    }
+
     onKpiClick(key) {
         const domainMap = {
             draft: [["state", "=", "draft"]],

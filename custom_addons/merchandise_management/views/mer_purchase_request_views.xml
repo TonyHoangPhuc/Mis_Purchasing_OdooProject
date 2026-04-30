@@ -66,10 +66,20 @@
                     <group class="oe_subtotal_footer oe_right">
                         <field name="amount_total" string="Tổng tiền dự kiến" widget="monetary" readonly="1" decoration-bf="1"/>
                     </group>
+                    <div class="clearfix"/>
+                    <field name="x_mer_budget_info" nolabel="1" invisible="not x_mer_budget_info or context.get('from_store_menu')"/>
                     <notebook>
                         <page string="Sản phẩm" name="lines">
                             <!-- O2M: Chi tiết sản phẩm -->
-                            <field name="line_ids" mode="list"/>
+                            <field name="line_ids" readonly="state != 'draft'">
+                                <list editable="bottom">
+                                    <field name="product_id"/>
+                                    <field name="product_qty" string="Số lượng yêu cầu"/>
+                                    <field name="product_uom_id" readonly="1"/>
+                                    <field name="price_unit" string="Đơn giá dự kiến"/>
+                                    <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
+                                </list>
+                            </field>
                         </page>
                         <page string="Ghi chú" name="notes">
                             <field name="notes" placeholder="Nhập ghi chú thêm..."/>

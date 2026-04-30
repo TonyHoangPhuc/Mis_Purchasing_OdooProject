@@ -1,13 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <menuitem id="menu_merchandise_root"
-              name="Merchandise"
-              web_icon="purchase,static/description/icon.png"
-              groups="merchandise_management.group_merchandise_user"
-              sequence="10"/>
-
-    <menuitem id="purchase.menu_purchase_root" active="False"/>
-
     <menuitem id="menu_merchandise_dashboard"
               name="Tổng quan"
               parent="menu_merchandise_root"
@@ -19,15 +11,6 @@
               parent="menu_merchandise_root"
               action="action_mer_po_management"
               sequence="5"/>
-
-    <menuitem id="menu_merchandise_requests"
-              name="Yêu cầu PR"
-              parent="menu_merchandise_root"
-              sequence="10"/>
-
-    <record id="menu_merchandise_requests" model="ir.ui.menu">
-        <field name="action" eval="False"/>
-    </record>
 
     <menuitem id="menu_merchandise_requests_pending"
               name="PR chờ duyệt"
@@ -53,12 +36,6 @@
               action="action_mer_promotion"
               sequence="15"/>
 
-    <menuitem id="menu_merchandise_discrepancy"
-              name="Báo cáo sai lệch"
-              parent="menu_merchandise_root"
-              groups="merchandise_management.group_merchandise_user"
-              sequence="20"/>
-
     <menuitem id="menu_merchandise_discrepancy_lack"
               name="Báo cáo thiếu hàng"
               parent="menu_merchandise_discrepancy"
@@ -81,13 +58,26 @@
               sequence="3"/>
 
     <menuitem id="menu_merchandise_products"
-              name="Sản phẩm"
+              name="SKU &amp; Danh mục"
               parent="menu_merchandise_root"
               action="product.product_template_action_all"
-              sequence="30"/>
+              sequence="8"/>
 
     <menuitem id="menu_merchandise_config"
-              name="Cấu hình"
+              name="Cấu hình hệ thống"
               parent="menu_merchandise_root"
-              sequence="100"/>
+              groups="merchandise_management.group_merchandise_user"
+              sequence="9"/>
+
+    <menuitem id="menu_merchandise_budget"
+              name="Ngân sách mua hàng"
+              parent="menu_merchandise_config"
+              action="action_mer_purchase_budget"
+              sequence="1"/>
+
+    <menuitem id="menu_merchandise_store_stock"
+              name="Phân tích tồn kho Store"
+              parent="menu_merchandise_products"
+              action="store_management.action_store_product_lines"
+              sequence="20"/>
 </odoo>

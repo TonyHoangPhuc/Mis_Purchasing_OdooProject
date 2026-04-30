@@ -178,14 +178,16 @@ class MerPurchaseRequest(models.Model):
             request.internal_picking_count = len(request.line_ids.mapped("internal_picking_id"))
             request.can_create_processing = bool(
                 request.line_ids.filtered(
-                    lambda line: (
-                        line.fulfillment_method in ("supplier", "supplier_central")
-                        and not line.purchase_order_id
-                    )
-                    or (
-                        line.fulfillment_method == "internal"
-                        and not line.internal_picking_id
-                        and line.internal_flow_state in (False, "not_applicable")
+                    lambda line: not line.product_id.x_mer_stop_ordering and (
+                        (
+                            line.fulfillment_method in ("supplier", "supplier_central")
+                            and not line.purchase_order_id
+                        )
+                        or (
+                            line.fulfillment_method == "internal"
+                            and not line.internal_picking_id
+                            and line.internal_flow_state in (False, "not_applicable")
+                        )
                     )
                 )
             )
@@ -313,6 +315,8 @@ class MerPurchaseRequest(models.Model):
             if not request.line_ids:
                 raise UserError(_("PR phải có ít nhất một sản phẩm trước khi trình quản lý."))
             for line in request.line_ids:
+                if line.product_id.x_mer_stop_ordering:
+                    continue
                 if line.approved_qty <= 0:
                     raise UserError(
                         _(
@@ -463,7 +467,7 @@ class MerPurchaseRequest(models.Model):
 
     def _create_internal_pickings_for_lines(self, lines):
         self.ensure_one()
-        lines = lines.filtered(lambda line: not line.internal_picking_id)
+        lines = lines.filtered(lambda line: not line.internal_picking_id and not line.product_id.x_mer_stop_ordering)
         if not lines:
             return self.env["stock.picking"]
 
@@ -579,8 +583,29 @@ class MerPurchaseRequest(models.Model):
     def action_send_to_manager(self):
         self = self.with_context(store_current_action="action_send_to_manager")
         self._check_store_menu_action_allowed()
-        self._validate_merchandise_processing()
-        return super().action_send_to_manager()
+        
+        valid_requests = self.env['mer.purchase.request']
+        for request in self:
+            # Tự động điền SL duyệt = SL yêu cầu nếu đang để trống hoặc bằng 0 cho sản phẩm KHÔNG bị dừng
+            for line in request.line_ids.filtered(lambda l: l.approved_qty <= 0 and not l.product_id.x_mer_stop_ordering):
+                line.approved_qty = line.product_qty
+                
+            # Đảm bảo các dòng bị dừng đặt hàng có SL duyệt = 0
+            stopped_lines = request.line_ids.filtered(lambda l: l.product_id.x_mer_stop_ordering)
+            if stopped_lines:
+                stopped_lines.write({'approved_qty': 0.0, 'internal_flow_state': 'not_applicable'})
+                stopped_names = ", ".join(stopped_lines.mapped('product_id.display_name'))
+                request.message_post(body=_("Lưu ý: Các sản phẩm sau đã bị dừng đặt hàng (Approved Qty = 0): %s") % stopped_names)
+            
+            # Chỉ cho phép PR đi tiếp nếu có ít nhất một sản phẩm có SL duyệt > 0 và không bị dừng
+            if request.line_ids.filtered(lambda l: l.approved_qty > 0 and not l.product_id.x_mer_stop_ordering):
+                valid_requests |= request
+        
+        if not valid_requests:
+            raise UserError(_("Không có sản phẩm nào hợp lệ để trình duyệt (Tất cả đều bằng 0 hoặc đã dừng đặt hàng). Vui lòng kiểm tra lại tab Phân tích tồn kho."))
+
+        valid_requests._validate_merchandise_processing()
+        return super(MerPurchaseRequest, valid_requests).action_send_to_manager()
 
     def action_approve(self):
         self = self.with_context(store_current_action="action_approve")
@@ -611,18 +636,31 @@ class MerPurchaseRequest(models.Model):
             raise UserError(_("PR cần ở trạng thái đã duyệt hoặc đang thực hiện trước khi khởi tạo xử lý."))
 
         lines_to_process = self.line_ids.filtered(
-            lambda line: (
-                line.fulfillment_method in ("supplier", "supplier_central")
-                and not line.purchase_order_id
-            )
-            or (
-                line.fulfillment_method == "internal"
-                and not line.internal_picking_id
-                and line.internal_flow_state in (False, "not_applicable")
+            lambda line: not line.product_id.x_mer_stop_ordering and (
+                (
+                    line.fulfillment_method in ("supplier", "supplier_central")
+                    and not line.purchase_order_id
+                )
+                or (
+                    line.fulfillment_method == "internal"
+                    and not line.internal_picking_id
+                    and line.internal_flow_state in (False, "not_applicable")
+                )
             )
         )
+        
+        stopped_lines = self.line_ids.filtered(lambda l: l.product_id.x_mer_stop_ordering and not l.purchase_order_id and not l.internal_picking_id)
+        
         if not lines_to_process:
+            if stopped_lines:
+                self.action_cancel()
+                self.message_post(body=_("Tất cả sản phẩm trong PR đều bị dừng đặt hàng. Hệ thống tự động hủy đơn."))
+                return True
             raise UserError(_("Tất cả dòng sản phẩm của PR này đã được khởi tạo xử lý rồi."))
+
+        if stopped_lines:
+            stopped_names = ", ".join(stopped_lines.mapped('product_id.display_name'))
+            self.message_post(body=_("Bỏ qua các sản phẩm bị dừng đặt hàng: %s") % stopped_names)
 
         created_orders = self.env["purchase.order"]
         supplier_groups = defaultdict(lambda: self.env["mer.purchase.request.line"])
@@ -913,6 +951,7 @@ class MerPurchaseRequest(models.Model):
 
 
 class MerPurchaseRequestLine(models.Model):
+    store_on_hand_qty = fields.Float(string="Tồn tại Cửa hàng", compute="_compute_supply_metrics")
     _inherit = "mer.purchase.request.line"
     approved_qty = fields.Float(
         string="S\u1ed1 l\u01b0\u1ee3ng \u0111\u01b0\u1ee3c duy\u1ec7t",
@@ -1155,6 +1194,7 @@ class MerPurchaseRequestLine(models.Model):
             line.other_warehouses_qty = 0.0
             line.source_available_qty = 0.0
             line.central_stock_value = 0.0
+            line.store_on_hand_qty = 0.0
             # Kiểm tra xem các trường báo cáo có tồn tại không trước khi gán
             if hasattr(line, 'remaining_after_dispatch_qty'):
                 line.remaining_after_dispatch_qty = 0.0
@@ -1165,6 +1205,14 @@ class MerPurchaseRequestLine(models.Model):
             if not line.product_id or not line.request_id:
                 continue
 
+                        # Tính tồn tại Cửa hàng (Kho yêu cầu)
+            if line.request_id.warehouse_id:
+                store_quants = quant_model.search([
+                    ("product_id", "=", line.product_id.id),
+                    ("location_id", "child_of", line.request_id.warehouse_id.lot_stock_id.id),
+                ])
+                line.store_on_hand_qty = sum(store_quants.mapped("quantity"))
+
             company_id = line.request_company_id.id or self.env.company.id
             warehouses = line.request_id._get_relevant_supply_warehouses().filtered(
                 lambda wh: wh.company_id.id == company_id
@@ -1172,6 +1220,14 @@ class MerPurchaseRequestLine(models.Model):
             
             scanned_wh_names = warehouses.mapped('name')
             breakdown = []
+            # Tính tồn tại Kho nguồn (nếu có) - Cần thực hiện riêng vì kho nguồn có thể là chính kho yêu cầu (bị lọc khỏi warehouses)
+            if line.source_warehouse_id:
+                source_quants = quant_model.search([
+                    ("product_id", "=", line.product_id.id),
+                    ("location_id", "child_of", line.source_warehouse_id.lot_stock_id.id),
+                ])
+                line.source_available_qty = sum(source_quants.mapped("quantity"))
+
             for warehouse in warehouses:
                 # Tìm quants tại kho
                 quants = quant_model.search([
@@ -1187,10 +1243,6 @@ class MerPurchaseRequestLine(models.Model):
                 
                 if qty > 0 or available > 0:
                     breakdown.append("%s: %.0f (Tồn: %.0f)" % (warehouse.name, qty, available))
-                
-                if line.source_warehouse_id and warehouse.id == line.source_warehouse_id.id:
-                    # Lấy Tồn thực tế (qty) thay vì Khả dụng (available) theo ý người dùng
-                    line.source_available_qty = qty
             
             if not warehouses:
                 line.availability_breakdown = _("Chưa thiết lập Kho tổng cho công ty này.")
@@ -1207,6 +1259,13 @@ class MerPurchaseRequestLine(models.Model):
             # Lấy giá trị tồn kho dựa trên CHI PHÍ (Cost) của sản phẩm
             price = line.product_id.standard_price or 0.0
             line.central_stock_value = line.central_on_hand_qty * price
+
+    @api.depends("product_qty", "approved_qty", "price_unit")
+    def _compute_price_subtotal(self):
+        for line in self:
+            # Ưu tiên sử dụng Số lượng được duyệt để tính Thành tiền
+            qty = line.approved_qty if line.approved_qty > 0 or line.request_id.state != 'draft' else line.product_qty
+            line.price_subtotal = qty * line.price_unit
 
     def action_view_supply_stock(self):
         self.ensure_one()
@@ -1388,3 +1447,40 @@ class MerPurchaseRequestLine(models.Model):
             line.route_status_display = status
 
             line.route_status_display = status
+
+    x_demand_status = fields.Selection(
+        [
+            ("normal", "Bình thường"),
+            ("low", "Thiếu hàng"),
+            ("high", "Dư hàng"),
+            ("stopped", "Đã dừng đặt"),
+        ],
+        string="Trạng thái nhu cầu",
+        compute="_compute_demand_status",
+        store=True,
+    )
+
+    @api.depends(
+        "product_id.x_mer_stop_ordering",
+    )
+    def _compute_demand_status(self):
+        for line in self:
+            if line.product_id.x_mer_stop_ordering:
+                line.x_demand_status = "stopped"
+            else:
+                line.x_demand_status = "normal"
+
+    def action_mer_stop_ordering(self):
+        for line in self:
+            line.product_id.write({'x_mer_stop_ordering': True})
+            # Tự động gán approved_qty = 0 cho các dòng liên quan trong cùng PR
+            other_lines = line.request_id.line_ids.filtered(lambda l: l.product_id == line.product_id)
+            other_lines.write({'approved_qty': 0.0})
+            line.request_id.message_post(body=_("Sản phẩm %s đã được tạm dừng đặt hàng bởi %s.") % (line.product_id.display_name, self.env.user.name))
+        return True
+
+    def action_mer_reactivate_ordering(self):
+        for line in self:
+            line.product_id.write({'x_mer_stop_ordering': False})
+            line.request_id.message_post(body=_("Sản phẩm %s đã được mở lại đặt hàng bởi %s.") % (line.product_id.display_name, self.env.user.name))
+        return True
