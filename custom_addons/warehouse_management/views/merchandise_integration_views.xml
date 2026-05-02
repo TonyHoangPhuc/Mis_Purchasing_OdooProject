@@ -107,8 +107,29 @@
         <field name="model">purchase.order</field>
         <field name="inherit_id" ref="purchase.purchase_order_form"/>
         <field name="arch" type="xml">
+            <xpath expr="//sheet" position="before">
+                <div class="alert alert-info d-flex align-items-center mb-0" role="alert" invisible="not partner_id">
+                    <div class="flex-grow-1">
+                        <i class="fa fa-info-circle mr-2"/>
+                        <b>Thẻ điểm Nhà cung cấp:</b> 
+                        Uy tín: <field name="mer_reliability_score_related" class="font-weight-bold"/>% | 
+                        Xếp hạng: <field name="mer_rating_related" widget="badge" 
+                                        decoration-success="mer_rating_related == 'excellent'"
+                                        decoration-info="mer_rating_related == 'good'"
+                                        decoration-warning="mer_rating_related == 'average'"
+                                        decoration-danger="mer_rating_related == 'poor'"/> | 
+                        Lead-time TB: <field name="mer_avg_lead_time_related"/> ngày
+                    </div>
+                    <div invisible="mer_rating_related != 'poor'" class="text-danger ml-3">
+                        <i class="fa fa-exclamation-triangle"/> <b>CẢNH BÁO RỦI RO CAO</b>
+                    </div>
+                </div>
+            </xpath>
             <xpath expr="//field[@name='origin']" position="after">
                 <field name="mer_request_id" readonly="1" invisible="not mer_request_id"/>
+                <field name="mer_reliability_score_related" invisible="1"/>
+                <field name="mer_rating_related" invisible="1"/>
+                <field name="mer_avg_lead_time_related" invisible="1"/>
             </xpath>
             <xpath expr="//field[@name='invoice_status']" position="before">
                 <field

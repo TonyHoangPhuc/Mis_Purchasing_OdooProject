@@ -14,6 +14,7 @@
                         </group>
                         <group string="Thống kê giao dịch">
                             <field name="mer_total_po_count"/>
+                            <field name="mer_avg_lead_time"/>
                             <field name="mer_total_discrepancy_count" decoration-danger="mer_total_discrepancy_count > 0"/>
                         </group>
                     </group>

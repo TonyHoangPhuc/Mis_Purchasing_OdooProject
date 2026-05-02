@@ -15,11 +15,16 @@ class MerPurchaseBudget(models.Model):
     budget_amount = fields.Monetary(string="Ngân sách", required=True, tracking=True)
     
     spent_amount = fields.Monetary(
-        string="Đã sử dụng", 
-        compute="_compute_spent_amount", 
+        string="Đã thực chi (PO)", 
+        compute="_compute_amounts", 
         help="Tổng giá trị các PO đã duyệt trong khoảng thời gian này."
     )
-    remaining_amount = fields.Monetary(string="Còn lại", compute="_compute_remaining_amount")
+    committed_amount = fields.Monetary(
+        string="Đã cam kết (PR)",
+        compute="_compute_amounts",
+        help="Tổng giá trị các PR đã phê duyệt nhưng chưa chuyển thành PO."
+    )
+    remaining_amount = fields.Monetary(string="Còn lại thực tế", compute="_compute_amounts")
     
     state = fields.Selection([
         ('draft', 'Nháp'),
@@ -27,26 +32,35 @@ class MerPurchaseBudget(models.Model):
         ('closed', 'Đã đóng')
     ], string="Trạng thái", default='draft', tracking=True)
 
-    @api.depends('budget_amount', 'spent_amount')
-    def _compute_remaining_amount(self):
+    @api.depends('budget_amount', 'date_from', 'date_to', 'category_id')
+    def _compute_amounts(self):
         for rec in self:
-            rec.remaining_amount = rec.budget_amount - rec.spent_amount
-
-    @api.depends('date_from', 'date_to', 'category_id')
-    def _compute_spent_amount(self):
-        for rec in self:
-            # Tìm các PO liên kết với ngành hàng này trong khoảng thời gian
+            # 1. Tính Spent Amount (Từ các PO đã xác nhận)
             pos = self.env['purchase.order'].search([
                 ('state', 'in', ('purchase', 'done')),
                 ('date_approve', '>=', rec.date_from),
                 ('date_approve', '<=', rec.date_to),
             ])
-            # Lọc các dòng PO thuộc ngành hàng này
-            total = 0.0
+            total_spent = 0.0
             for po in pos:
                 lines = po.order_line.filtered(lambda l: l.product_id.categ_id == rec.category_id)
-                total += sum(lines.mapped('price_subtotal'))
-            rec.spent_amount = total
+                total_spent += sum(lines.mapped('price_subtotal'))
+            rec.spent_amount = total_spent
+
+            # 2. Tính Committed Amount (Từ các PR đã duyệt nhưng chưa thành PO)
+            prs = self.env['mer.purchase.request'].search([
+                ('state', '=', 'approved'),
+                ('date_request', '>=', rec.date_from),
+                ('date_request', '<=', rec.date_to),
+            ])
+            total_committed = 0.0
+            for pr in prs:
+                lines = pr.line_ids.filtered(lambda l: l.product_id.categ_id == rec.category_id)
+                total_committed += sum(lines.mapped('price_subtotal'))
+            rec.committed_amount = total_committed
+
+            # 3. Còn lại = Ngân sách - (Đã chi + Đã hứa chi)
+            rec.remaining_amount = rec.budget_amount - (total_spent + total_committed)
 
     def action_activate(self):
         self.write({'state': 'active'})

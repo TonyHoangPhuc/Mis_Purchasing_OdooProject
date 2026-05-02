@@ -67,7 +67,11 @@
                         <field name="amount_total" string="Tổng tiền dự kiến" widget="monetary" readonly="1" decoration-bf="1"/>
                     </group>
                     <div class="clearfix"/>
-                    <field name="x_mer_budget_info" nolabel="1" invisible="not x_mer_budget_info or context.get('from_store_menu')"/>
+                    <div class="row" invisible="context.get('from_store_menu')">
+                        <div class="col-12">
+                            <field name="x_mer_budget_info" nolabel="1" widget="html" class="mb-3"/>
+                        </div>
+                    </div>
                     <notebook>
                         <page string="Sản phẩm" name="lines">
                             <!-- O2M: Chi tiết sản phẩm -->

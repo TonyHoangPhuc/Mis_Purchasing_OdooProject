@@ -11,8 +11,9 @@
                 <field name="date_from"/>
                 <field name="date_to"/>
                 <field name="budget_amount" sum="Tổng ngân sách"/>
-                <field name="spent_amount" sum="Tổng đã xài"/>
-                <field name="remaining_amount" sum="Tổng còn lại" decoration-danger="remaining_amount &lt; 0" decoration-success="remaining_amount &gt; 0"/>
+                <field name="spent_amount" string="Đã thực chi" sum="Tổng đã xài"/>
+                <field name="committed_amount" string="Đã cam kết" sum="Tổng cam kết"/>
+                <field name="remaining_amount" string="Còn lại thực tế" sum="Tổng còn lại" decoration-danger="remaining_amount &lt; 0" decoration-success="remaining_amount &gt; 0"/>
                 <field name="state" widget="badge" decoration-info="state == 'draft'" decoration-success="state == 'active'" decoration-muted="state == 'closed'"/>
             </list>
         </field>
@@ -49,12 +50,15 @@
                     </group>
                     <group string="Theo dõi sử dụng">
                         <group>
-                            <field name="spent_amount"/>
-                            <field name="remaining_amount" decoration-bf="1" decoration-danger="remaining_amount &lt; 0" decoration-success="remaining_amount &gt; 0"/>
+                            <field name="spent_amount" string="Đã thực chi (PO)"/>
+                            <field name="committed_amount" string="Đã cam kết (PR)"/>
+                            <field name="remaining_amount" string="Còn lại thực tế" decoration-bf="1" decoration-danger="remaining_amount &lt; 0" decoration-success="remaining_amount &gt; 0"/>
                         </group>
                         <group>
                              <div class="alert alert-info" role="alert">
-                                <b>Hướng dẫn:</b> Ngân sách sẽ được tính dựa trên các Đơn mua hàng (PO) đã duyệt thuộc Ngành hàng này trong khoảng thời gian đã chọn.
+                                <b>Giải thích:</b> <br/>
+                                - <b>Đã thực chi:</b> Tổng giá trị từ các Đơn mua hàng (PO) đã xác nhận. <br/>
+                                - <b>Đã cam kết:</b> Tổng giá trị từ các Yêu cầu (PR) đã duyệt nhưng chưa chuyển thành PO.
                             </div>
                         </group>
                     </group>

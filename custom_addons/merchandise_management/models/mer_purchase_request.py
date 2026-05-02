@@ -29,6 +29,24 @@ class MerPurchaseRequestLine(models.Model):
     @api.onchange('product_id')
     def _onchange_product_id(self):
         if self.product_id:
+            # Kiểm tra trạng thái vòng đời SKU
+            if self.product_id.x_mer_sku_lifecycle == 'discontinued':
+                product_name = self.product_id.name
+                self.product_id = False
+                return {
+                    'warning': {
+                        'title': _('Sản phẩm ngừng kinh doanh'),
+                        'message': _('Sản phẩm "%s" đã ngừng kinh doanh. Không thể tạo yêu cầu mua hàng.') % product_name
+                    }
+                }
+            elif self.product_id.x_mer_sku_lifecycle == 'phase_out':
+                return {
+                    'warning': {
+                        'title': _('Sản phẩm đang xả hàng'),
+                        'message': _('Sản phẩm "%s" đang trong giai đoạn xả hàng (Phase-out). Vui lòng cân nhắc kỹ trước khi nhập thêm.') % self.product_id.name
+                    }
+                }
+
             self.product_uom_id = self.product_id.uom_id
             # Lấy giá vốn của sản phẩm làm giá dự kiến ban đầu
             self.price_unit = self.product_id.standard_price

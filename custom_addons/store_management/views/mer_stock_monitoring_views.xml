@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_store_product_line_mer_kanban" model="ir.ui.view">
+        <field name="name">store.product.line.mer.kanban</field>
+        <field name="model">store.product.line</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="stock_status_type" sample="1">
+                <field name="product_id"/>
+                <field name="store_id"/>
+                <field name="available_qty"/>
+                <field name="days_of_stock"/>
+                <field name="stock_status_label"/>
+                <field name="stock_status_type"/>
+                <templates>
+                    <t t-name="card">
+                        <div class="oe_kanban_global_click p-3" style="border-radius: 12px;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong><field name="product_id"/></strong>
+                                <field name="stock_status_label" widget="badge" 
+                                       decoration-danger="stock_status_type == 'out_of_stock'"
+                                       decoration-warning="stock_status_type == 'shortage'"
+                                       decoration-success="stock_status_type == 'normal'"
+                                       decoration-info="stock_status_type == 'overstock'"/>
+                            </div>
+                            <div class="mb-1 text-muted">
+                                <i class="fa fa-building-o mr-1"/> <field name="store_id"/>
+                            </div>
+                            <div class="row">
+                                <div class="col-6">
+                                    <small class="text-muted">Ngày tồn:</small> <field name="days_of_stock" decoration-danger="days_of_stock &lt; 3" decoration-warning="days_of_stock &lt; 7"/>
+                                </div>
+                                <div class="col-6 text-end">
+                                    <small class="text-muted">Tồn:</small> <field name="available_qty"/>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="action_mer_stock_monitoring" model="ir.actions.act_window">
+        <field name="name">Theo dõi tồn kho toàn chuỗi</field>
+        <field name="res_model">store.product.line</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="context">{'search_default_group_store': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Bảng theo dõi tồn kho và định mức toàn bộ cửa hàng.
+            </p>
+        </field>
+    </record>
+
+    <record id="menu_mer_stock_monitoring" model="ir.ui.menu">
+        <field name="name">Theo dõi Tồn kho</field>
+        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
+        <field name="action" ref="action_mer_stock_monitoring"/>
+        <field name="sequence" eval="5"/>
+    </record>
+</odoo>

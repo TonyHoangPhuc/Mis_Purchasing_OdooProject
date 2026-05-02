@@ -258,22 +258,34 @@ Module `warehouse_management` quản lý kiểm tra QC đầu vào, trạng thá
 9. Nếu đạt, hàng được nhập kho và PR được cập nhật hoàn tất.
 10. Nếu thiếu/dư/lỗi, hệ thống tạo báo cáo sai lệch để xử lý tiếp.
 
-### Luồng NCC giao về Kho tổng rồi giao cửa hàng
+### Tóm tắt 3 luồng giao hàng
 
-1. Merchandise tạo/duyệt PR với phương án NCC giao về Kho tổng.
-2. Hệ thống tạo PO cho NCC.
-3. Kho tổng nhận hàng và QC.
-4. Nếu QC đạt, hệ thống tạo phiếu giao Kho tổng -> Cửa hàng.
-5. Cửa hàng nhận hàng, kiểm tra thực tế và QC.
-6. Nếu có sai lệch, báo cáo được gửi cho Merchandise để bù hàng, thu hồi hàng dư hoặc xử lý hàng lỗi.
+#### 1. Kho tổng có sẵn -> Cửa hàng
 
-### Luồng NCC giao thẳng cửa hàng
+1. Merchandise duyệt PR và chọn phương án lấy hàng từ Kho tổng.
+2. Kho tổng kiểm tra tồn khả dụng theo từng dòng PR.
+3. Nếu đủ hàng, hệ thống tạo phiếu điều chuyển Kho tổng -> Cửa hàng.
+4. Kho tổng xác nhận giao hàng; cửa hàng nhận hàng, kiểm tra số lượng thực tế và QC.
+5. Nếu QC đạt, hàng được nhập vào kho cửa hàng và dòng PR chuyển sang đã giao.
+6. Nếu thiếu/dư/lỗi, hệ thống tạo báo cáo sai lệch để Merchandise xử lý bù hàng, thu hồi hoặc xử lý hàng lỗi.
 
-1. PR được xử lý theo phương án NCC giao thẳng cửa hàng.
-2. Hệ thống tạo PO giao về warehouse của cửa hàng.
-3. Cửa hàng kiểm tra số lượng thực tế.
-4. QC đạt thì nhập kho cửa hàng.
-5. Sai lệch được ghi nhận thành báo cáo để Merchandise xử lý.
+#### 2. NCC giao về Kho tổng -> Cửa hàng
+
+1. Merchandise duyệt PR và chọn phương án NCC giao về Kho tổng.
+2. Hệ thống tạo PO cho NCC với kho nhận là Kho tổng.
+3. Kho tổng nhận hàng, kiểm tra số lượng thực nhận và QC.
+4. Nếu QC đạt, hệ thống nhập hàng vào Kho tổng và tạo phiếu giao Kho tổng -> Cửa hàng.
+5. Cửa hàng nhận hàng, kiểm tra thực tế và QC trước khi nhập kho cửa hàng.
+6. Nếu phát sinh thiếu/dư/lỗi ở Kho tổng hoặc cửa hàng, hệ thống ghi nhận sai lệch và gửi Merchandise xử lý.
+
+#### 3. NCC giao thẳng -> Cửa hàng
+
+1. Merchandise duyệt PR và chọn phương án NCC giao thẳng cửa hàng.
+2. Hệ thống tạo PO cho NCC với kho nhận là warehouse của cửa hàng.
+3. NCC giao hàng trực tiếp đến cửa hàng.
+4. Cửa hàng kiểm tra số lượng thực nhận và QC.
+5. Nếu QC đạt, hàng được nhập thẳng vào kho cửa hàng.
+6. Nếu thiếu/dư/lỗi, hệ thống tạo báo cáo sai lệch hoặc báo cáo nhận dư để Merchandise xử lý bù hàng, thu hồi hoặc trả hàng.
 
 ### Luồng xử lý hàng cận hạn
 

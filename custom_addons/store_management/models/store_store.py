@@ -515,17 +515,40 @@ class StoreProductLine(models.Model):
         string="Tốc độ bán (30n)",
         digits="Product Unit of Measure",
         compute="_compute_stock_metrics",
+        store=True,
         help="Số lượng bán trung bình mỗi ngày trong 30 ngày qua.",
     )
     days_of_stock = fields.Float(
         string="Ngày tồn dự kiến",
         compute="_compute_stock_metrics",
+        store=True,
         help="Số ngày dự kiến hết hàng dựa trên tồn khả dụng và tốc độ bán.",
     )
     needs_replenishment = fields.Boolean(
         string="Cần bổ sung hàng",
         compute="_compute_stock_metrics",
         search="_search_needs_replenishment",
+    )
+    is_overstock = fields.Boolean(
+        string="Dư hàng",
+        compute="_compute_stock_metrics",
+        help="Tồn kho khả dụng vượt quá định mức tối đa.",
+    )
+    stock_status_type = fields.Selection(
+        [
+            ("out_of_stock", "Cháy hàng"),
+            ("shortage", "Thiếu hàng"),
+            ("normal", "Bình thường"),
+            ("high", "Tồn cao"),
+            ("overstock", "Dư hàng"),
+        ],
+        string="Trạng thái tồn kho",
+        compute="_compute_stock_metrics",
+        store=True,
+    )
+    stock_status_label = fields.Char(
+        string="Cảnh báo",
+        compute="_compute_stock_metrics",
     )
 
     _sql_constraints = [
@@ -591,6 +614,27 @@ class StoreProductLine(models.Model):
             line.pending_replenishment_qty = pending_qty
             line.suggested_replenishment_qty = suggested_qty
             line.needs_replenishment = suggested_qty > 0
+            
+            # --- NEW Logic cho Merchandise ---
+            line.is_overstock = available_qty > line.max_qty and line.max_qty > 0
+            
+            status = "normal"
+            label = "Bình thường"
+            if available_qty <= 0:
+                status = "out_of_stock"
+                label = "Cháy hàng!"
+            elif available_qty < line.min_qty:
+                status = "shortage"
+                label = "Thiếu hàng"
+            elif line.is_overstock:
+                status = "overstock"
+                label = "Dư hàng (Xả kho)"
+            elif available_qty > (line.max_qty * 0.8) and line.max_qty > 0:
+                status = "high"
+                label = "Tồn cao"
+                
+            line.stock_status_type = status
+            line.stock_status_label = label
 
             # --- NEW: Tính tốc độ bán và ngày tồn ---
             today = fields.Date.today()

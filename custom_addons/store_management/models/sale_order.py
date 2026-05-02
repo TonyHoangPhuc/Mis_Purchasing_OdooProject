@@ -103,3 +103,16 @@ class SaleOrderLine(models.Model):
     def _compute_store_available_products(self):
         for line in self:
             line.x_available_product_ids = line.order_id._get_sale_store_products()
+
+    # --- NEW: Phân tích tài chính cho Merchandise ---
+    x_mer_margin = fields.Monetary(string="Lợi nhuận gộp", compute="_compute_mer_financials", store=True)
+    x_mer_margin_percent = fields.Float(string="Tỷ suất LN (%)", compute="_compute_mer_financials", store=True)
+    currency_id = fields.Many2one(related='order_id.currency_id')
+
+    @api.depends('price_subtotal', 'product_id', 'product_uom_qty')
+    def _compute_mer_financials(self):
+        for line in self:
+            cost = line.product_id.standard_price * line.product_uom_qty
+            margin = line.price_subtotal - cost
+            line.x_mer_margin = margin
+            line.x_mer_margin_percent = (margin / line.price_subtotal * 100) if line.price_subtotal else 0.0

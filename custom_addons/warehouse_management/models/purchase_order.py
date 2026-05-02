@@ -23,6 +23,11 @@ class PurchaseOrder(models.Model):
         compute="_compute_wm_store_receipt_status",
         store=True,
     )
+    
+    # --- Thông tin hiệu năng NCC (Dùng để hiển thị alert trên PO) ---
+    mer_reliability_score_related = fields.Integer(related='partner_id.mer_reliability_score', string="Điểm uy tín NCC")
+    mer_rating_related = fields.Selection(related='partner_id.mer_rating', string="Xếp hạng NCC")
+    mer_avg_lead_time_related = fields.Float(related='partner_id.mer_avg_lead_time', string="Lead-time TB")
 
     @api.depends("origin")
     def _compute_mer_request_id(self):

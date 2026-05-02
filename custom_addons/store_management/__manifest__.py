@@ -28,6 +28,8 @@
         "views/mer_delivery_discrepancy_views.xml",
         "views/mer_delivery_discrepancy_wizard_views.xml",
         "views/warehouse_management_integration_views.xml",
+        "views/mer_stock_monitoring_views.xml",
+        "views/mer_sales_analysis_views.xml",
     ],
     "installable": True,
     "application": True,

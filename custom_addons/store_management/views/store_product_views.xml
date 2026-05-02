@@ -16,9 +16,15 @@
                 <field name="pending_replenishment_qty" readonly="1" optional="show"/>
                 <field name="sales_velocity_30d" readonly="1" string="Tốc độ bán (30n)" optional="show" digits="[16, 2]"/>
                 <field name="days_of_stock" readonly="1" string="Ngày tồn" widget="badge" 
-                       decoration-danger="days_of_stock &lt; 7" 
-                       decoration-warning="days_of_stock &lt; 14" 
-                       decoration-success="days_of_stock &gt;= 14"/>
+                       decoration-danger="days_of_stock &lt; 3" 
+                       decoration-warning="days_of_stock &lt; 7" 
+                       decoration-success="days_of_stock &gt;= 7"/>
+                <field name="stock_status_label" string="Trạng thái" widget="badge"
+                       decoration-danger="stock_status_type == 'out_of_stock'"
+                       decoration-warning="stock_status_type == 'shortage'"
+                       decoration-success="stock_status_type == 'normal'"
+                       decoration-primary="stock_status_type == 'high'"
+                       decoration-info="stock_status_type == 'overstock'"/>
                 <field name="suggested_replenishment_qty" readonly="1" string="Đề xuất bổ sung" widget="badge" decoration-danger="suggested_replenishment_qty > 0" decoration-success="suggested_replenishment_qty == 0"/>
                 <button
                     name="action_create_replenishment_pr"
@@ -71,7 +77,10 @@
                 <field name="warehouse_id"/>
                 <field name="product_id"/>
                 <field name="categ_id"/>
-                <filter name="needs_replenishment" string="Cần bổ sung hàng" domain="[('needs_replenishment', '=', True)]"/>
+                <filter name="out_of_stock" string="Hết hàng" domain="[('stock_status_type', '=', 'out_of_stock')]"/>
+                <filter name="needs_replenishment" string="Cần bổ sung hàng" domain="[('stock_status_type', 'in', ('out_of_stock', 'shortage'))]"/>
+                <filter name="overstock" string="Dư hàng (Xả kho)" domain="[('stock_status_type', '=', 'overstock')]"/>
+                <filter name="fast_moving" string="Bán chạy (Velocity > 5)" domain="[('sales_velocity_30d', '>', 5)]"/>
                 <separator/>
                 <group>
                     <filter name="group_store" string="Cửa hàng" domain="[]" context="{'group_by': 'store_id'}"/>
