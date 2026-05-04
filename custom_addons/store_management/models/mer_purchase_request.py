@@ -97,6 +97,18 @@ class MerPurchaseRequest(models.Model):
         readonly=True,
     )
 
+    def _auto_init(self):
+        res = super()._auto_init()
+        self.env.cr.execute(
+            """
+            UPDATE mer_purchase_request
+               SET state = 'done'
+             WHERE is_replenishment_from_discrepancy IS TRUE
+               AND state = 'po_created'
+            """
+        )
+        return res
+
     @api.onchange("store_id")
     def _onchange_store_id(self):
         if self.store_id:
@@ -458,11 +470,13 @@ class MerPurchaseRequest(models.Model):
                 )
                 for po in relevant_pos:
                     try:
-                        # Gọi logic tạo hóa đơn của Odoo cho PO
-                        po.with_context(create_bill=True).action_create_invoice()
+                        self.env["store.vendor.bill"].sudo()._create_from_purchase_orders(po)
                     except Exception as e:
                         request.message_post(body=_("Hệ thống không thể tự động tạo hóa đơn cho PO %s: %s") % (po.name, str(e)))
             elif has_started_documents:
+                if request.is_replenishment_from_discrepancy:
+                    request.state = "done"
+                    continue
                 request.state = "po_created"
 
     def _create_internal_pickings_for_lines(self, lines):
@@ -559,7 +573,7 @@ class MerPurchaseRequest(models.Model):
             created_pickings |= central_picking | store_picking
 
         if created_pickings:
-            self.state = "po_created"
+            self.state = "done" if self.is_replenishment_from_discrepancy else "po_created"
         return created_pickings
 
     def action_submit(self):
@@ -716,7 +730,7 @@ class MerPurchaseRequest(models.Model):
             internal_lines.with_context(store_skip_sync_rule=True).write({"internal_flow_state": "pending_check"})
 
         if created_orders or internal_lines:
-            self.state = "po_created"
+            self.state = "done" if self.is_replenishment_from_discrepancy else "po_created"
 
         return {
             "type": "ir.actions.act_window",

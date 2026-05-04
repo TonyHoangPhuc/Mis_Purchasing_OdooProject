@@ -1,5 +1,7 @@
 import operator as py_operator
 
+from markupsafe import escape
+
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
@@ -25,6 +27,13 @@ class MerPurchaseRequestLine(models.Model):
     
     price_unit = fields.Float(string='Đơn giá dự kiến', digits='Product Price')
     price_subtotal = fields.Float(string='Thành tiền', compute='_compute_price_subtotal', store=True)
+    budget_id = fields.Many2one(
+        "mer.purchase.budget",
+        string="Ngân sách áp dụng",
+        copy=False,
+        domain="[('state', '=', 'active')]",
+        help="Ngân sách sẽ được dùng để kiểm tra hạn mức cho dòng sản phẩm này.",
+    )
 
     @api.onchange('product_id')
     def _onchange_product_id(self):
@@ -50,6 +59,7 @@ class MerPurchaseRequestLine(models.Model):
             self.product_uom_id = self.product_id.uom_id
             # Lấy giá vốn của sản phẩm làm giá dự kiến ban đầu
             self.price_unit = self.product_id.standard_price
+            self._suggest_budget()
             
     @api.depends('product_qty', 'price_unit')
     def _compute_price_subtotal(self):
@@ -71,6 +81,73 @@ class MerPurchaseRequestLine(models.Model):
             
             # 3. Nếu hoàn toàn không có NCC, lấy giá tiêu chuẩn của sản phẩm
             self.price_unit = self.product_id.standard_price
+
+    def _suggest_budget(self, force=False):
+        for line in self:
+            if not line.product_id or not line.request_id:
+                continue
+            if line.budget_id and not force:
+                continue
+            line.budget_id = line.request_id._find_active_budget_for_category(
+                line.product_id.categ_id,
+                line.request_id._get_budget_date(),
+            )
+
+    @api.onchange("product_id", "request_id.date_request")
+    def _onchange_budget_candidate(self):
+        self._suggest_budget(force=True)
+
+    def _auto_init(self):
+        res = super()._auto_init()
+        self.env.cr.execute(
+            """
+            SELECT to_regclass('mer_purchase_budget'),
+                   to_regclass('product_category'),
+                   to_regclass('product_template')
+            """
+        )
+        if not all(self.env.cr.fetchone()):
+            return res
+        self.env.cr.execute(
+            """
+            UPDATE mer_purchase_request_line line
+               SET budget_id = budget_match.id
+              FROM mer_purchase_request request,
+                   product_product product,
+                   product_template template,
+                   product_category category,
+                   LATERAL (
+                       SELECT budget.id
+                         FROM mer_purchase_budget budget
+                         JOIN product_category budget_category
+                           ON budget_category.id = budget.category_id
+                        WHERE budget.state = 'active'
+                          AND budget.date_from <= request.date_request
+                          AND budget.date_to >= request.date_request
+                          AND (
+                              category.id = budget.category_id
+                              OR category.parent_path LIKE budget.category_id::text || '/%'
+                              OR category.parent_path LIKE '%/' || budget.category_id::text || '/%'
+                          )
+                        ORDER BY LENGTH(COALESCE(budget_category.parent_path, '')) DESC,
+                                 budget.date_from DESC,
+                                 budget.id DESC
+                        LIMIT 1
+                   ) AS budget_match
+             WHERE line.request_id = request.id
+               AND line.product_id = product.id
+               AND product.product_tmpl_id = template.id
+               AND template.categ_id = category.id
+               AND line.budget_id IS NULL
+            """
+        )
+        return res
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        lines = super().create(vals_list)
+        lines.filtered(lambda line: not line.budget_id)._suggest_budget()
+        return lines
 
 # Quy trình phê duyệt yêu cầu mua hàng (PR)
 class MerPurchaseRequest(models.Model):
@@ -96,7 +173,10 @@ class MerPurchaseRequest(models.Model):
     partner_id = fields.Many2one('res.partner', string='Kho tổng / Nhà cung cấp', required=True)
     company_partner_id = fields.Many2one('res.partner', compute='_compute_company_partner_id', readonly=True)
     warehouse_id = fields.Many2one('stock.warehouse', string='Cửa hàng', required=True, default=lambda self: self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)], limit=1))
-    date_request = fields.Date(string='Ngày yêu cầu', default=fields.Date.today)
+    date_request = fields.Date(
+        string='Ngày yêu cầu',
+        default=lambda self: fields.Date.context_today(self),
+    )
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')
     
@@ -143,6 +223,190 @@ class MerPurchaseRequest(models.Model):
             html += "</div>"
             request.x_mer_budget_info = html if cat_amounts else False
     
+    def _get_budget_date(self):
+        self.ensure_one()
+        return self.date_request or fields.Date.context_today(self)
+
+    @api.onchange("date_request")
+    def _onchange_date_request_budget(self):
+        for line in self.line_ids:
+            line._suggest_budget(force=True)
+
+    @api.model
+    def _get_category_and_parents(self, category):
+        categories = self.env["product.category"]
+        while category:
+            categories |= category
+            category = category.parent_id
+        return categories
+
+    def _find_active_budget_for_category(self, category, budget_date):
+        self.ensure_one()
+        categories = self._get_category_and_parents(category)
+        if not categories:
+            return self.env["mer.purchase.budget"]
+
+        budgets = self.env["mer.purchase.budget"].search(
+            [
+                ("category_id", "in", categories.ids),
+                ("state", "=", "active"),
+                ("date_from", "<=", budget_date),
+                ("date_to", ">=", budget_date),
+            ]
+        )
+        for category_id in categories.ids:
+            budget = budgets.filtered(lambda current: current.category_id.id == category_id)[:1]
+            if budget:
+                return budget
+        return self.env["mer.purchase.budget"]
+
+    def _is_budget_valid_for_category(self, budget, category, budget_date):
+        self.ensure_one()
+        if not budget or not category:
+            return False
+        return bool(
+            budget.state == "active"
+            and budget.date_from <= budget_date <= budget.date_to
+            and category.id in self.env["product.category"].search(
+                [("id", "child_of", budget.category_id.id)]
+            ).ids
+        )
+
+    def _get_budget_hint_for_category(self, category, budget_date):
+        self.ensure_one()
+        categories = self._get_category_and_parents(category)
+        if not categories:
+            return _("Sản phẩm chưa có ngành hàng")
+
+        budgets = self.env["mer.purchase.budget"].search(
+            [("category_id", "in", categories.ids)],
+            order="date_from desc, id desc",
+        )
+        if not budgets:
+            return _("Không có ngân sách thiết lập")
+
+        active_outside_period = budgets.filtered(lambda budget: budget.state == "active")[:1]
+        if active_outside_period:
+            return _("Ngân sách không áp dụng cho ngày yêu cầu %s") % budget_date
+
+        draft_budget = budgets.filtered(lambda budget: budget.state == "draft")[:1]
+        if draft_budget:
+            return _("Ngân sách đã tạo nhưng chưa kích hoạt")
+
+        closed_budget = budgets.filtered(lambda budget: budget.state == "closed")[:1]
+        if closed_budget:
+            return _("Ngân sách đã đóng")
+
+        return _("Không có ngân sách đang áp dụng")
+
+    def _get_budget_summary(self):
+        self.ensure_one()
+        summary = {}
+        budget_date = self._get_budget_date()
+        for line in self.line_ids:
+            category = line.product_id.categ_id
+            if not category:
+                continue
+
+            invalid_budget_hint = False
+            if line.budget_id:
+                if self._is_budget_valid_for_category(line.budget_id, category, budget_date):
+                    budget = line.budget_id
+                else:
+                    budget = self.env["mer.purchase.budget"]
+                    invalid_budget_hint = _(
+                        "Ngân sách đã chọn (%s) không hợp lệ cho ngành hàng/ngày yêu cầu"
+                    ) % line.budget_id.display_name
+            else:
+                budget = self._find_active_budget_for_category(category, budget_date)
+            key = ("budget", budget.id) if budget else ("missing", category.id)
+            if key not in summary:
+                summary[key] = {
+                    "amount": 0.0,
+                    "budget": budget,
+                    "category_names": set(),
+                    "line_budgets": set(),
+                    "hint": False,
+                }
+                if invalid_budget_hint:
+                    summary[key]["hint"] = invalid_budget_hint
+                elif not budget:
+                    summary[key]["hint"] = self._get_budget_hint_for_category(category, budget_date)
+            summary[key]["amount"] += line.price_subtotal
+            summary[key]["category_names"].add(category.display_name)
+            if line.budget_id:
+                summary[key]["line_budgets"].add(line.budget_id.display_name)
+        return list(summary.values())
+
+    @api.depends('line_ids.price_subtotal', 'line_ids.product_id.categ_id', 'date_request')
+    def _compute_x_mer_budget_info(self):
+        for request in self:
+            items = request._get_budget_summary()
+            if not items:
+                request.x_mer_budget_info = False
+                continue
+
+            html = "<div class='alert alert-light'>"
+            for item in items:
+                amount = item["amount"]
+                budget = item["budget"]
+                category_label = ", ".join(sorted(item["category_names"]))
+
+                status_color = "green"
+                if not budget:
+                    status_text = item["hint"] or _("Không có ngân sách thiết lập")
+                    status_color = "gray"
+                elif budget.remaining_amount < amount:
+                    status_text = _("VƯỢT NGÂN SÁCH (Còn: {:,.0f})").format(budget.remaining_amount)
+                    status_color = "red"
+                else:
+                    status_text = _("Trong tầm kiểm soát (Còn: {:,.0f})").format(budget.remaining_amount)
+
+                if budget and budget.category_id.display_name not in item["category_names"]:
+                    category_label = _("%(categories)s (ngân sách: %(budget)s)") % {
+                        "categories": category_label,
+                        "budget": budget.category_id.display_name,
+                    }
+
+                html += (
+                    "<li><b>{category}</b>: {status} "
+                    "<span style='color: {color};'>●</span></li>"
+                ).format(
+                    category=escape(category_label),
+                    status=escape(status_text),
+                    color=status_color,
+                )
+            html += "</div>"
+            request.x_mer_budget_info = html
+
+    def _validate_budget_selection(self):
+        for request in self:
+            budget_date = request._get_budget_date()
+            for line in request.line_ids:
+                if not line.product_id:
+                    continue
+                if not line.budget_id:
+                    raise UserError(
+                        _("Dòng sản phẩm %s chưa chọn Ngân sách áp dụng.")
+                        % line.product_id.display_name
+                    )
+                if not request._is_budget_valid_for_category(
+                    line.budget_id,
+                    line.product_id.categ_id,
+                    budget_date,
+                ):
+                    raise UserError(
+                        _(
+                            "Ngân sách %(budget)s không hợp lệ cho sản phẩm %(product)s "
+                            "hoặc ngày yêu cầu %(date)s."
+                        )
+                        % {
+                            "budget": line.budget_id.display_name,
+                            "product": line.product_id.display_name,
+                            "date": budget_date,
+                        }
+                    )
+
     purchase_order_count = fields.Integer(
         string='Số PO',
         compute='_compute_purchase_order_count',
@@ -283,6 +547,25 @@ class MerPurchaseRequest(models.Model):
         self.write({'state': 'approved', 'manager_id': self.env.user.id})
 
     # Từ chối yêu cầu
+    def action_approve(self):
+        self._validate_budget_selection()
+        for request in self:
+            for item in request._get_budget_summary():
+                budget = item["budget"]
+                amount = item["amount"]
+                if budget and budget.remaining_amount < amount:
+                    category_label = ", ".join(sorted(item["category_names"]))
+                    raise UserError(
+                        _("Vượt ngân sách ngành hàng '%s'! Ngân sách còn lại: %s, Yêu cầu: %s")
+                        % (
+                            category_label,
+                            "{:,.0f}".format(budget.remaining_amount),
+                            "{:,.0f}".format(amount),
+                        )
+                    )
+
+        self.write({'state': 'approved', 'manager_id': self.env.user.id})
+
     def action_reject(self):
         self.write({'state': 'rejected'})
 

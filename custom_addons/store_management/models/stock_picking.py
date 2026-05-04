@@ -84,6 +84,7 @@ class StockPicking(models.Model):
             ("shortage", "Nhận thiếu"),
             ("overage", "Nhận dư"),
             ("mixed", "Vừa thiếu vừa dư"),
+            ("damaged_partial", "Có hàng lỗi"),
             ("damaged_rejected", "Từ chối lô do hàng lỗi"),
         ],
         string="Vấn đề nhận hàng",
@@ -104,6 +105,107 @@ class StockPicking(models.Model):
         compute_sudo=True,
         store=True,
     )
+
+    def _auto_init(self):
+        res = super()._auto_init()
+        self.env.cr.execute(
+            "SELECT to_regclass('mer_discrepancy_report'), to_regclass('mer_excess_receipt')"
+        )
+        if not all(self.env.cr.fetchone()):
+            return res
+        self.env.cr.execute(
+            """
+            UPDATE stock_move move
+               SET wm_expected_qty = source.expected_qty
+              FROM (
+                    SELECT picking_id, product_id, MAX(expected_qty) AS expected_qty
+                      FROM (
+                            SELECT picking_id, product_id, expected_qty
+                              FROM mer_discrepancy_report
+                             WHERE expected_qty > 0
+                            UNION ALL
+                            SELECT picking_id, product_id, expected_qty
+                              FROM mer_excess_receipt
+                             WHERE expected_qty > 0
+                           ) raw
+                     GROUP BY picking_id, product_id
+                   ) source
+             WHERE source.picking_id = move.picking_id
+               AND source.product_id = move.product_id
+               AND (
+                    move.wm_expected_qty IS NULL
+                    OR move.wm_expected_qty = 0
+                    OR move.wm_expected_qty < source.expected_qty
+               )
+            """
+        )
+        self.env.cr.execute(
+            """
+            UPDATE mer_discrepancy_report report
+               SET state = 'cancel',
+                   solution_notes = COALESCE(
+                       NULLIF(report.solution_notes, ''),
+                       'Báo cáo bị hủy do sản phẩm này đã được xử lý theo báo cáo hàng lỗi.'
+                   )
+             WHERE report.reason IN ('shortage', 'overage')
+               AND report.state != 'cancel'
+               AND EXISTS (
+                   SELECT 1
+                     FROM mer_discrepancy_report damaged
+                    WHERE damaged.picking_id = report.picking_id
+                      AND damaged.product_id = report.product_id
+                      AND damaged.reason = 'damaged'
+                      AND damaged.state != 'cancel'
+               )
+            """
+        )
+        self.env.cr.execute(
+            """
+            UPDATE mer_excess_receipt excess
+               SET state = 'cancel',
+                   notes = COALESCE(
+                       NULLIF(excess.notes, ''),
+                       'Phiếu bị hủy do sản phẩm này đã được xử lý theo báo cáo hàng lỗi.'
+                   )
+             WHERE excess.state != 'cancel'
+               AND EXISTS (
+                   SELECT 1
+                     FROM mer_discrepancy_report damaged
+                    WHERE damaged.picking_id = excess.picking_id
+                      AND damaged.product_id = excess.product_id
+                      AND damaged.reason = 'damaged'
+                      AND damaged.state != 'cancel'
+               )
+            """
+        )
+        self.env.cr.execute(
+            """
+            UPDATE stock_picking picking
+               SET store_receipt_issue_type = 'damaged_partial'
+             WHERE picking.store_receipt_issue_type IN ('shortage', 'overage', 'mixed')
+               AND EXISTS (
+                   SELECT 1
+                     FROM mer_discrepancy_report report
+                    WHERE report.picking_id = picking.id
+                      AND report.reason = 'damaged'
+                      AND report.state != 'cancel'
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM mer_discrepancy_report report
+                    WHERE report.picking_id = picking.id
+                      AND report.reason IN ('shortage', 'overage')
+                      AND report.state != 'cancel'
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM mer_excess_receipt excess
+                    WHERE excess.picking_id = picking.id
+                      AND excess.state != 'cancel'
+               )
+            """
+        )
+        return res
 
     wm_qc_status = fields.Selection(
         [
@@ -204,6 +306,11 @@ class StockPicking(models.Model):
             else _("Kho tổng")
         )
         return self._get_or_create_store_exception_location(_("Hàng lỗi chờ Kho tổng xử lý - %s") % central_name)
+
+    def _get_or_create_store_supplier_damaged_location(self):
+        self.ensure_one()
+        store_name = self.store_receiving_store_id.name or self.picking_type_id.warehouse_id.display_name or _("Cửa hàng")
+        return self._get_or_create_store_exception_location(_("Hàng lỗi chờ trả NCC - %s") % store_name)
 
     @api.depends("picking_type_code", "location_dest_id", "location_dest_id.warehouse_id", "picking_type_id.warehouse_id")
     def _compute_wm_is_incoming_receipt(self):
@@ -466,7 +573,7 @@ class StockPicking(models.Model):
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
                 shortage_note=_("Kho tổng nhận thiếu hàng từ NCC. Báo cáo đã được gửi Merchandise để xử lý tiếp."),
-                create_excess_report=False,
+                create_excess_report=True,
             )
             picking.store_receipt_issue_type = issue_type
             
@@ -484,7 +591,7 @@ class StockPicking(models.Model):
 
             if issue_type in ("shortage", "mixed"):
                 shortage_product_ids = active_moves.filtered(
-                    lambda move: move.quantity < move.product_uom_qty
+                    lambda move: move.quantity < move._get_wm_expected_qty()
                 ).mapped("product_id").ids
                 request_lines = self.env["mer.purchase.request.line"].search(
                     [
@@ -609,6 +716,36 @@ class StockPicking(models.Model):
         if requests:
             requests._sync_state_with_logistics()
 
+    def _auto_create_vendor_bills_after_store_receipt(self):
+        purchase_orders = self.mapped("purchase_id")
+        request_lines = self.env["mer.purchase.request.line"].search([
+            "|", ("internal_picking_id", "in", self.ids),
+                 ("store_receipt_picking_id", "in", self.ids),
+        ])
+        purchase_orders |= request_lines.mapped("purchase_order_id")
+        purchase_orders = purchase_orders.filtered(
+            lambda po: po.state in ("purchase", "done") and po.invoice_status == "to invoice"
+        )
+        for po in purchase_orders:
+            try:
+                self.env["store.vendor.bill"].sudo()._create_from_purchase_orders(po)
+            except Exception as e:
+                related_pickings = self.filtered(
+                    lambda picking: picking.purchase_id == po
+                    or po in (
+                        request_lines.filtered(
+                            lambda line: line.internal_picking_id == picking
+                            or line.store_receipt_picking_id == picking
+                        ).mapped("purchase_order_id")
+                    )
+                )
+                target = related_pickings[:1] if related_pickings else self[:1]
+                if target:
+                    target.message_post(
+                        body=_("Hệ thống không thể tự động tạo hóa đơn NCC cho PO %s: %s")
+                        % (po.name, str(e))
+                    )
+
     def action_start_store_delivery(self):
         for picking in self:
             if not picking._is_central_to_store_transfer():
@@ -702,9 +839,13 @@ class StockPicking(models.Model):
         self.ensure_one()
         reports = self.env["mer.discrepancy.report"].search([("picking_id", "=", self.id)])
         excess_reports = self.env["mer.excess.receipt"].search([("picking_id", "=", self.id)])
-        if excess_reports and not reports:
+        if excess_reports:
             action = self.env["ir.actions.actions"]._for_xml_id("store_management.action_mer_excess_receipt")
-            action["domain"] = [("id", "in", excess_reports.ids)]
+            action["domain"] = [("picking_id", "=", self.id)]
+            action["context"] = {
+                "default_picking_id": self.id,
+                "search_default_picking_id": self.id,
+            }
             if len(excess_reports) == 1:
                 action.update(
                     {
@@ -774,23 +915,86 @@ class StockPicking(models.Model):
         return_picking.action_confirm()
         return return_picking
 
+    def _create_store_supplier_damaged_return_picking(self):
+        self.ensure_one()
+        return_picking_type = self.env["stock.picking.type"].search(
+            [
+                ("code", "=", "outgoing"),
+                ("warehouse_id", "=", self.picking_type_id.warehouse_id.id),
+            ],
+            limit=1,
+        )
+        supplier_location = self.env.ref("stock.stock_location_suppliers", raise_if_not_found=False)
+        if not return_picking_type or not supplier_location:
+            raise UserError(_("Chưa cấu hình loại phiếu xuất hoặc địa điểm Nhà cung cấp để tạo phiếu trả hàng lỗi."))
+
+        damaged_location = self._get_or_create_store_supplier_damaged_location()
+        return_moves = []
+        for move in self.move_ids.filtered(lambda current_move: current_move.state != "cancel" and current_move.wm_damaged_qty > 0):
+            return_qty = move.quantity
+            self.env["stock.quant"].sudo()._update_available_quantity(
+                move.product_id, damaged_location, return_qty
+            )
+            return_moves.append(
+                (
+                    0,
+                    0,
+                    {
+                        "product_id": move.product_id.id,
+                        "product_uom_qty": return_qty,
+                        "product_uom": move.product_uom.id,
+                        "location_id": damaged_location.id,
+                        "location_dest_id": supplier_location.id,
+                        "description_picking": _("[TRẢ NCC - HÀNG LỖI] %s từ phiếu %s")
+                        % (move.product_id.display_name, self.name),
+                    },
+                )
+            )
+        if not return_moves:
+            raise UserError(_("Phiếu không có dòng hàng lỗi để tạo phiếu trả NCC."))
+
+        return_picking = self.env["stock.picking"].sudo().create(
+            {
+                "partner_id": self.partner_id.id,
+                "picking_type_id": return_picking_type.id,
+                "location_id": damaged_location.id,
+                "location_dest_id": supplier_location.id,
+                "origin": _("Trả NCC phần hàng lỗi: %s") % self.name,
+                "move_ids": return_moves,
+            }
+        )
+        return_picking.action_confirm()
+        return return_picking
+
     def _create_store_central_damaged_return_picking(self):
         self.ensure_one()
         central_picking = self._get_store_receipt_central_source_picking()
-        if not central_picking:
-            raise UserError(_("Không xác định được phiếu Kho tổng -> Cửa hàng gốc để trả hàng lỗi."))
+        central_warehouse = (
+            central_picking.location_id.warehouse_id
+            if central_picking and central_picking.location_id.warehouse_id
+            else self.mer_request_id._get_default_internal_source_warehouse()
+        )
+        if not central_warehouse:
+            raise UserError(_("Không xác định được Kho tổng nguồn để trả hàng lỗi."))
 
         damaged_location = self._get_or_create_central_damaged_location()
         picking_type = (
-            central_picking.location_id.warehouse_id.int_type_id
-            or central_picking.picking_type_id
+            central_warehouse.int_type_id
+            or (central_picking.picking_type_id if central_picking else False)
+            or self.env["stock.picking.type"].search(
+                [
+                    ("code", "=", "internal"),
+                    ("warehouse_id", "=", central_warehouse.id),
+                ],
+                limit=1,
+            )
         )
         if not picking_type:
             raise UserError(_("Chưa cấu hình loại phiếu nội bộ cho Kho tổng để nhận hàng lỗi."))
 
         return_moves = []
-        for move in self.move_ids.filtered(lambda current_move: current_move.state != "cancel" and current_move.product_uom_qty > 0):
-            return_qty = move.wm_damaged_qty if move.wm_damaged_qty > 0 else move.product_uom_qty
+        for move in self.move_ids.filtered(lambda current_move: current_move.state != "cancel" and current_move.wm_damaged_qty > 0):
+            return_qty = move.quantity
             return_moves.append(
                 (
                     0,
@@ -807,11 +1011,11 @@ class StockPicking(models.Model):
                 )
             )
         if not return_moves:
-            raise UserError(_("Phiếu không có dòng hàng hợp lệ để tạo phiếu trả hàng lỗi về Kho tổng."))
+            raise UserError(_("Phiếu không có dòng hàng lỗi để tạo phiếu trả hàng lỗi về Kho tổng."))
 
         return_picking = self.env["stock.picking"].sudo().create(
             {
-                "partner_id": central_picking.partner_id.id,
+                "partner_id": (central_picking.partner_id.id if central_picking and central_picking.partner_id else central_warehouse.partner_id.id),
                 "picking_type_id": picking_type.id,
                 "location_id": self.location_id.id,
                 "location_dest_id": damaged_location.id,
@@ -834,9 +1038,20 @@ class StockPicking(models.Model):
         has_shortage = False
         has_overage = False
         for move in self.move_ids.filtered(lambda current_move: current_move.state != "cancel"):
+            actual_qty = move.quantity
+            expected_qty = move._get_wm_expected_qty()
+            if move.wm_damaged_qty > 0:
+                if float_compare(
+                    move.quantity,
+                    0.0,
+                    precision_rounding=move.product_uom.rounding or 0.01,
+                ):
+                    move.quantity = 0.0
+                continue
+
             comparison = float_compare(
-                move.quantity,
-                move.product_uom_qty,
+                actual_qty,
+                expected_qty,
                 precision_rounding=move.product_uom.rounding or 0.01,
             )
             if comparison < 0:
@@ -854,14 +1069,12 @@ class StockPicking(models.Model):
                     "purchase_id": self.purchase_id.id,
                     "warehouse_id": destination_warehouse.id if destination_warehouse else False,
                     "product_id": move.product_id.id,
-                    "expected_qty": move.product_uom_qty,
-                    "actual_qty": move.quantity,
+                    "expected_qty": expected_qty,
+                    "actual_qty": actual_qty,
                     "reason": "shortage",
                     "solution_notes": shortage_note or _("Được tạo/cập nhật khi Cửa hàng xác nhận nhập kho."),
                 }
-                if submit_shortage:
-                    vals["submitted_to_merchandise"] = True
-                if self._is_store_receipt_from_central():
+                if submit_shortage and not self._is_store_receipt_for_qc():
                     vals["submitted_to_merchandise"] = True
                 if report:
                     report.write(vals)
@@ -869,7 +1082,7 @@ class StockPicking(models.Model):
                     self.env["mer.discrepancy.report"].create(vals)
             elif comparison > 0:
                 has_overage = True
-                allow_excess_receipt = create_excess_report and self.store_route_type not in ("supplier_to_central", "supplier_to_store")
+                allow_excess_receipt = create_excess_report
                 if allow_excess_receipt:
                     report = self.env["mer.excess.receipt"].search(
                         [
@@ -882,8 +1095,8 @@ class StockPicking(models.Model):
                     vals = {
                         "picking_id": self.id,
                         "product_id": move.product_id.id,
-                        "expected_qty": move.product_uom_qty,
-                        "actual_qty": move.quantity,
+                        "expected_qty": expected_qty,
+                        "actual_qty": actual_qty,
                         "notes": _("Được tạo/cập nhật khi Cửa hàng xác nhận nhập kho. Hệ thống chỉ nhập đúng số lượng theo PR/PO."),
                     }
                     if report:
@@ -896,11 +1109,25 @@ class StockPicking(models.Model):
                     self.message_post(
                         body=_("<b>Từ chối dư hàng (Sản phẩm %s):</b> Phát hiện dư %s cái so với chứng từ. Do luồng nhận từ NCC, hệ thống tự động hoàn trả xe và chỉ nhập kho số lượng đúng PO.") % (
                             move.product_id.display_name,
-                            move.quantity - move.product_uom_qty
+                            actual_qty - expected_qty
                         ),
                         subtype_xmlid="mail.mt_note",
                     )
-                move.quantity = move.product_uom_qty
+            if self._is_store_receipt_for_qc():
+                valid_qty = min(
+                    max(actual_qty - min(max(move.wm_damaged_qty, 0.0), max(actual_qty, 0.0)), 0.0),
+                    expected_qty,
+                )
+            elif comparison > 0:
+                valid_qty = expected_qty
+            else:
+                valid_qty = move.quantity
+            if float_compare(
+                move.quantity,
+                valid_qty,
+                precision_rounding=move.product_uom.rounding or 0.01,
+            ):
+                move.quantity = valid_qty
         if has_shortage and has_overage:
             return "mixed"
         if has_shortage:
@@ -920,15 +1147,20 @@ class StockPicking(models.Model):
                 continue
             
             # Điều chỉnh nếu phiếu này được xác nhận là có thiếu hàng (shortage) hoặc hàng lỗi bị từ chối (damaged_rejected)
-            if picking.store_receipt_issue_type not in ('shortage', 'mixed', 'damaged_rejected'):
+            has_damaged_qty = any(
+                move.wm_damaged_qty > 0
+                for move in picking.move_ids.filtered(lambda current_move: current_move.state != "cancel")
+            )
+            if picking.store_receipt_issue_type not in ('shortage', 'mixed', 'damaged_rejected') and not has_damaged_qty:
                 continue
 
             for move in picking.move_ids.filtered(lambda m: m.state != 'cancel' and m.purchase_line_id):
                 po_line = move.purchase_line_id
+                target_qty = 0.0 if picking.store_receipt_issue_type == 'damaged_rejected' else move.quantity
                 
                 # So sánh số lượng thực nhận (quantity) với số lượng trên PO (product_qty)
                 comparison = float_compare(
-                    move.quantity,
+                    target_qty,
                     po_line.product_qty,
                     precision_rounding=move.product_uom.rounding or 0.01,
                 )
@@ -937,12 +1169,12 @@ class StockPicking(models.Model):
                     old_qty = po_line.product_qty
                     try:
                         # Dùng sudo vì nhân viên kho thường không có quyền sửa PO
-                        po_line.sudo().write({'product_qty': move.quantity})
+                        po_line.sudo().write({'product_qty': target_qty})
                         picking.message_post(
                             body=_("<b>Điều chỉnh Ngân sách:</b> Đã tự động giảm số lượng PO line (%s) từ %s xuống %s để khớp với thực nhận, giúp giải phóng ngân sách cho đơn bù hàng.") % (
                                 move.product_id.display_name,
                                 old_qty,
-                                move.quantity
+                                target_qty
                             )
                         )
                     except Exception as e:
@@ -994,11 +1226,10 @@ class StockPicking(models.Model):
                 "purchase_id": self.purchase_id.id,
                 "warehouse_id": destination_warehouse.id if destination_warehouse else False,
                 "product_id": move.product_id.id,
-                "expected_qty": move.product_uom_qty,
+                "expected_qty": move._get_wm_expected_qty(),
                 "actual_qty": 0.0,
                 "damaged_qty": move.wm_damaged_qty,
                 "reason": "damaged",
-                "submitted_to_merchandise": True,
                 "solution_notes": _(
                     "%(party)s từ chối toàn bộ lô nhập do phát hiện %(qty)s hàng hư hỏng. Ghi chú: %(note)s"
                 )
@@ -1008,6 +1239,8 @@ class StockPicking(models.Model):
                     "note": move.wm_damage_note or "",
                 },
             }
+            if self._is_central_supplier_receipt():
+                vals["submitted_to_merchandise"] = True
             if report:
                 report.write(vals)
             else:
@@ -1024,6 +1257,7 @@ class StockPicking(models.Model):
 
         active_moves = self.move_ids.filtered(lambda current_move: current_move.state != "cancel")
         damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
+        damaged_moves._validate_wm_damaged_qty_not_over_received()
         if not damaged_moves:
             raise UserError(_("Chưa ghi nhận số lượng hư hỏng. Nếu hàng đạt, hãy dùng nút Xác nhận nhập hàng vào kho."))
 
@@ -1038,12 +1272,12 @@ class StockPicking(models.Model):
         if self._is_store_receipt_from_central():
             return_picking = self._create_store_central_damaged_return_picking()
             message = _(
-                "Đã tạo phiếu trả hàng lỗi về Kho tổng <b>%s</b>. Phiếu nhập Cửa hàng bị hủy, hàng lỗi không cộng vào tồn khả dụng của Cửa hàng hoặc Kho tổng."
+                "Đã tạo phiếu trả phần hàng lỗi về Kho tổng <b>%s</b>. Hệ thống vẫn tiếp tục nhập các sản phẩm/số lượng đạt vào kho Cửa hàng."
             ) % return_picking.name
         else:
-            return_picking = self._create_store_supplier_full_return_picking()
+            return_picking = self._create_store_supplier_damaged_return_picking()
             message = _(
-                "Đã tạo phiếu trả NCC <b>%s</b> cho toàn bộ lô hàng lỗi. Phiếu nhập gốc bị hủy, không cộng bất kỳ số lượng nào vào tồn kho của Cửa hàng."
+                "Đã tạo phiếu trả NCC <b>%s</b> cho phần hàng lỗi. Hệ thống vẫn tiếp tục nhập các sản phẩm/số lượng đạt vào kho Cửa hàng."
             ) % return_picking.name
         self.env["mer.discrepancy.report"].search(
             [
@@ -1051,42 +1285,67 @@ class StockPicking(models.Model):
                 ("reason", "=", "damaged"),
             ]
         ).write({"return_picking_id": return_picking.id})
-        self.write(
-            {
-                "store_receipt_issue_type": "damaged_rejected",
-                "store_rejected_return_picking_id": return_picking.id,
-                "wm_qc_status": "rejected",
-                "wm_qc_checked_by": self.env.user.id,
-                "wm_qc_checked_on": fields.Datetime.now(),
-                "wm_qc_note": self.wm_qc_note or _("Từ chối toàn bộ lô giao do phát hiện hàng hư hỏng tại Cửa hàng."),
-            }
+        issue_type = self._ensure_store_receipt_discrepancy_reports(
+            submit_shortage=True,
+            create_excess_report=True,
+            shortage_note=_("Cửa hàng nhận thiếu hàng. Báo cáo đã được gửi Merchandise để tạo PR bù hàng."),
         )
-        # Tự động bóp PO để hoàn lại ngân sách cho đơn bù hàng
-        self._adjust_po_quantities_to_actual()
-        self.env["mer.purchase.request.line"].search(
-            [("store_receipt_picking_id", "=", self.id)]
-        ).with_context(store_skip_sync_rule=True).write({"internal_flow_state": "rejected"})
-        
-        # Hủy các báo cáo Thiếu/Dư đã tạo trước đó vì toàn bộ lô đã bị từ chối
+        damaged_product_ids = damaged_moves.mapped("product_id").ids
         self.env["mer.discrepancy.report"].search([
             ("picking_id", "=", self.id),
             ("reason", "in", ["shortage", "overage"]),
+            ("product_id", "in", damaged_product_ids),
             ("state", "!=", "cancel")
         ]).write({
-            "state": "cancel", 
-            "solution_notes": _("Báo cáo bị hủy do toàn bộ lô hàng đã bị từ chối vì có hàng hư hỏng.")
+            "state": "cancel",
+            "solution_notes": _("Báo cáo bị hủy do sản phẩm này đã được xử lý theo báo cáo hàng lỗi.")
         })
         self.env["mer.excess.receipt"].search([
             ("picking_id", "=", self.id),
+            ("product_id", "in", damaged_product_ids),
             ("state", "!=", "cancel")
         ]).write({
-            "state": "cancel", 
-            "notes": _("Phiếu bị hủy do toàn bộ lô hàng đã bị từ chối vì có hàng hư hỏng.")
+            "state": "cancel",
+            "notes": _("Phiếu bị hủy do sản phẩm này đã được xử lý theo báo cáo hàng lỗi.")
         })
-
-        self._notify_merchandise_store_receipt_rejected()
+        if issue_type == "none":
+            issue_type = "damaged_partial"
+        self.write(
+            {
+                "store_receipt_issue_type": issue_type,
+                "store_rejected_return_picking_id": return_picking.id,
+                "wm_qc_note": self.wm_qc_note or _("Có hàng hư hỏng tại Cửa hàng. Hệ thống chỉ nhập phần hàng đạt và tạo báo cáo lỗi để Merchandise xử lý bù hàng."),
+            }
+        )
+        # Tự động bóp PO để hoàn lại ngân sách cho phần thiếu/lỗi không nhập kho.
+        self._adjust_po_quantities_to_actual()
         self.message_post(body=message, subtype_xmlid="mail.mt_note")
-        self.action_cancel()
+
+        valid_qty = sum(active_moves.mapped("quantity"))
+        if valid_qty <= 0:
+            self.write(
+                {
+                    "wm_qc_status": "passed",
+                    "wm_qc_checked_by": self.env.user.id,
+                    "wm_qc_checked_on": fields.Datetime.now(),
+                }
+            )
+            self.action_cancel()
+            self.message_post(
+                body=_("Không có số lượng đạt để nhập kho. Hệ thống giữ các báo cáo lỗi/thiếu/dư để Merchandise xử lý bù hàng hoặc thu hồi."),
+                subtype_xmlid="mail.mt_note",
+            )
+            return return_picking
+
+        if self.wm_qc_status == "draft":
+            self.wm_qc_status = "checking"
+        self.with_context(
+            skip_immediate=True,
+            skip_backorder=True,
+            cancel_backorder=True,
+            skip_wm_damaged_received_validation=True,
+            picking_ids_not_to_backorder=self.ids,
+        ).action_qc_pass()
         return return_picking
 
     def action_return_central_damaged_receipt_to_supplier(self):
@@ -1100,6 +1359,7 @@ class StockPicking(models.Model):
 
             active_moves = picking.move_ids.filtered(lambda current_move: current_move.state != "cancel")
             damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
+            damaged_moves._validate_wm_damaged_qty_not_over_received()
             if not damaged_moves:
                 raise UserError(_("Chưa ghi nhận số lượng hư hỏng. Nếu hàng đạt, hãy dùng nút Xác nhận nhập hàng vào kho."))
 
@@ -1111,24 +1371,31 @@ class StockPicking(models.Model):
                 )
 
             picking._create_store_receipt_damaged_reports()
-            return_picking = picking._create_store_supplier_full_return_picking()
+            return_picking = picking._create_store_supplier_damaged_return_picking()
+            issue_type = picking._ensure_store_receipt_discrepancy_reports(
+                submit_shortage=True,
+                shortage_note=_("Kho tổng nhận thiếu hàng từ NCC. Báo cáo đã được gửi Merchandise để xử lý tiếp."),
+                create_excess_report=True,
+            )
+            if issue_type == "none":
+                issue_type = "damaged_partial"
             picking.write(
                 {
-                    "store_receipt_issue_type": "damaged_rejected",
+                    "store_receipt_issue_type": issue_type,
                     "store_rejected_return_picking_id": return_picking.id,
-                    "wm_qc_status": "rejected",
-                    "wm_qc_checked_by": self.env.user.id,
-                    "wm_qc_checked_on": fields.Datetime.now(),
                     "wm_qc_note": picking.wm_qc_note or _("Từ chối toàn bộ lô giao do phát hiện hàng hư hỏng tại Kho tổng."),
                 }
             )
             # Tự động bóp PO để hoàn lại ngân sách cho đơn bù hàng
+            picking.wm_qc_note = _("Có hàng hư hỏng tại Kho tổng. Hệ thống trả toàn bộ sản phẩm bị lỗi và chỉ nhập các sản phẩm không lỗi.")
             picking._adjust_po_quantities_to_actual()
             
             # Hủy các báo cáo Thiếu/Dư đã tạo trước đó vì toàn bộ lô đã bị từ chối
+            damaged_product_ids = damaged_moves.mapped("product_id").ids
             self.env["mer.discrepancy.report"].search([
                 ("picking_id", "=", picking.id),
                 ("reason", "in", ["shortage", "overage"]),
+                ("product_id", "in", damaged_product_ids),
                 ("state", "!=", "cancel")
             ]).write({
                 "state": "cancel", 
@@ -1136,6 +1403,7 @@ class StockPicking(models.Model):
             })
             self.env["mer.excess.receipt"].search([
                 ("picking_id", "=", picking.id),
+                ("product_id", "in", damaged_product_ids),
                 ("state", "!=", "cancel")
             ]).write({
                 "state": "cancel", 
@@ -1148,9 +1416,27 @@ class StockPicking(models.Model):
                 % return_picking.name,
                 subtype_xmlid="mail.mt_note",
             )
-            picking.action_cancel()
+            if sum(active_moves.mapped("quantity")) <= 0:
+                picking.write(
+                    {
+                        "wm_qc_status": "passed",
+                        "wm_qc_checked_by": self.env.user.id,
+                        "wm_qc_checked_on": fields.Datetime.now(),
+                    }
+                )
+                picking.action_cancel()
+                continue
 
-        self._handle_central_supplier_qc_rejection()
+            if picking.wm_qc_status == "draft":
+                super(StockPicking, picking).action_start_qc()
+            picking.with_context(
+                skip_immediate=True,
+                skip_backorder=True,
+                cancel_backorder=True,
+                skip_wm_damaged_received_validation=True,
+                picking_ids_not_to_backorder=picking.ids,
+            ).action_qc_pass()
+
         self._sync_related_mer_request_state()
         return {
             "type": "ir.actions.act_window",
@@ -1189,11 +1475,12 @@ class StockPicking(models.Model):
 
             damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
             if damaged_moves:
-                raise UserError(_("Phiếu có hàng hư hỏng. Vui lòng dùng nút Xử lý hàng lỗi để từ chối lô hàng lỗi."))
+                picking._return_store_damaged_receipt_to_supplier()
                 continue
 
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
+                create_excess_report=True,
                 shortage_note=_("Cửa hàng nhận thiếu hàng. Báo cáo đã được gửi Merchandise để tạo PR bù hàng."),
             )
             picking.store_receipt_issue_type = issue_type
@@ -1253,11 +1540,13 @@ class StockPicking(models.Model):
         }
 
     def action_qc_pass(self):
-        auto_reject_pickings = self.filtered(
-            lambda picking: picking._is_central_supplier_receipt()
-            and picking.wm_qc_status == "checking"
-            and any(move.wm_damaged_qty > 0 for move in picking.move_ids.filtered(lambda current_move: current_move.state != "cancel"))
-        )
+        auto_reject_pickings = self.env["stock.picking"]
+        if not self.env.context.get("skip_wm_damaged_received_validation"):
+            auto_reject_pickings = self.filtered(
+                lambda picking: picking._is_central_supplier_receipt()
+                and picking.wm_qc_status == "checking"
+                and any(move.wm_damaged_qty > 0 for move in picking.move_ids.filtered(lambda current_move: current_move.state != "cancel"))
+            )
         if auto_reject_pickings:
             auto_reject_pickings._prepare_auto_qc_rejection_from_damage()
             auto_reject_pickings.action_qc_reject()
@@ -1278,7 +1567,9 @@ class StockPicking(models.Model):
             ).button_validate()
 
             self._sync_related_mer_request_state()
+            pickings_to_validate._auto_create_vendor_bills_after_store_receipt()
             return validate_result or result
+        self._handle_central_supplier_qc_rejection()
         self._sync_related_mer_request_state()
         return result
 
@@ -1342,7 +1633,6 @@ class StockPicking(models.Model):
                     ),
                     subject=_("Lô hàng lỗi - QC không đạt: %s") % picking.name,
                 )
-        self._handle_central_supplier_qc_rejection()
         self._sync_related_mer_request_state()
         return result
 
@@ -1439,5 +1729,15 @@ class StockPicking(models.Model):
                 request_line_model.search(
                     [("store_receipt_picking_id", "in", completed_store_receipts.ids)]
                 ).write({"internal_flow_state": "delivered"})
+
+            resolved_damage_reports = self.env["mer.discrepancy.report"].search(
+                [
+                    ("return_picking_id", "in", completed_pickings.ids),
+                    ("reason", "=", "damaged"),
+                    ("state", "=", "draft"),
+                ]
+            )
+            resolved_damage_reports._mark_done_if_resolved()
         self._sync_related_mer_request_state()
+        completed_pickings.filtered(lambda picking: picking._is_store_receipt_for_qc())._auto_create_vendor_bills_after_store_receipt()
         return result

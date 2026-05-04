@@ -182,16 +182,8 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             if line.damaged_qty > 0 and not line.damage_note:
                 raise UserError(_("Vui lòng nhập Ghi chú lỗi cho sản phẩm hư hỏng %s.") % line.product_id.display_name)
 
+            # Không chặn nhận dư từ NCC tại đây nữa, để logic report phía dưới xử lý đồng nhất cho cả 3 luồng
             actual_qty = line.actual_qty
-            if self.picking_id.store_route_type in ("supplier_to_central", "supplier_to_store") and line.actual_qty > line.expected_qty:
-                excess_messages.append(
-                    _("<li><b>%s</b>: NCC giao dư %s, đã hoàn trả xe (nhận đúng PO %s).</li>") % (
-                        line.product_id.display_name,
-                        line.actual_qty - line.expected_qty,
-                        line.expected_qty,
-                    )
-                )
-                actual_qty = line.expected_qty
 
             self._write_actual_qty_to_moves(line.product_id, actual_qty, line.damaged_qty, line.damage_note)
 
@@ -204,15 +196,12 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
                 line.expected_qty,
                 precision_rounding=line.product_id.uom_id.rounding or 0.01,
             )
-            if comparison != 0:
-                if self.picking_id.store_route_type in ("supplier_to_central", "supplier_to_store") and actual_qty >= line.expected_qty:
-                    pass
-                elif actual_qty > line.expected_qty:
-                    self._create_or_update_excess_report(line, actual_qty)
-                    created_report_count += 1
-                else:
-                    self._create_or_update_shortage_report(line, actual_qty, destination_warehouse)
-                    created_report_count += 1
+            if comparison > 0:
+                self._create_or_update_excess_report(line, actual_qty)
+                created_report_count += 1
+            elif comparison < 0:
+                self._create_or_update_shortage_report(line, actual_qty, destination_warehouse)
+                created_report_count += 1
 
         if excess_messages:
             self.picking_id.message_post(
@@ -221,9 +210,24 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             )
 
         self.picking_id.write({"store_actual_check_done": True})
-        self.picking_id.message_post(
-            body=_("Đã cập nhật số lượng thực nhận, số lượng hư hỏng và ghi chú lỗi từ bước kiểm hàng thực tế."),
-        )
+        
+        # Tạo thông báo tổng hợp các báo cáo đã tạo
+        report_links = []
+        if created_report_count:
+            excess_reports = self.env["mer.excess.receipt"].search([("picking_id", "=", self.picking_id.id)])
+            shortage_reports = self.env["mer.discrepancy.report"].search([("picking_id", "=", self.picking_id.id)])
+            
+            for r in excess_reports:
+                report_links.append(_("<li>Dư hàng: %s (Sản phẩm: %s)</li>") % (r.name, r.product_id.display_name))
+            for r in shortage_reports:
+                reason_label = _("Thiếu hàng") if r.reason == "shortage" else _("Hàng lỗi")
+                report_links.append(_("<li>%s: %s (Sản phẩm: %s)</li>") % (reason_label, r.name, r.product_id.display_name))
+
+        msg_body = _("Đã cập nhật số lượng thực nhận từ bước kiểm hàng thực tế.")
+        if report_links:
+            msg_body += _("<br/><b>Các báo cáo sai lệch đã tạo/cập nhật:</b><ul>%s</ul>") % "".join(report_links)
+        
+        self.picking_id.message_post(body=msg_body)
 
         message = _("Đã lưu kết quả kiểm hàng thực tế.")
         if created_report_count:

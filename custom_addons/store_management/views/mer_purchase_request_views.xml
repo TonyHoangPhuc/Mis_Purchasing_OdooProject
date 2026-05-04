@@ -112,12 +112,13 @@
             </xpath>
 
             <xpath expr="//page[@name='lines']/field[@name='line_ids']" position="replace">
-                <field name="line_ids" readonly="state != 'draft'">
-                    <list editable="bottom">
-                        <field name="product_id"/>
-                        <field name="product_qty" string="Số lượng yêu cầu"/>
+                <field name="line_ids" readonly="state in ['approved', 'po_created', 'done', 'cancel']">
+                    <list editable="bottom" create="state == 'draft'" delete="state == 'draft'">
+                        <field name="product_id" readonly="parent.state != 'draft'"/>
+                        <field name="product_qty" string="Số lượng yêu cầu" readonly="parent.state != 'draft'"/>
+                        <field name="budget_id" optional="show"/>
                         <field name="product_uom_id" readonly="1"/>
-                        <field name="price_unit" string="Đơn giá dự kiến"/>
+                        <field name="price_unit" string="Đơn giá dự kiến" readonly="parent.state != 'draft'"/>
                         <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
                     </list>
                 </field>
@@ -130,6 +131,7 @@
                             <field name="product_id" readonly="1"/>
                             <field name="product_qty" string="Số lượng yêu cầu" readonly="1"/>
                             <field name="approved_qty" string="Số lượng được duyệt"/>
+                            <field name="budget_id" optional="show"/>
                             <field name="product_uom_id" readonly="1"/>
                             <field name="fulfillment_method"/>
                             <field name="source_warehouse_id" invisible="fulfillment_method not in ['internal', 'supplier_central']"/>

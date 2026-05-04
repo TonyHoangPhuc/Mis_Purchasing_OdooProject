@@ -95,7 +95,7 @@
                         groups="store_management.group_store_user"
                         context="{'default_picking_id': id, 'search_default_picking_id': id}"/>
                 <button name="action_start_store_delivery"
-                        string="Ti&#7871;n h&#224;nh giao h&#224;ng &#273;&#7871;n c&#7917;a h&#224;ng"
+                        string="Tiến hành giao hàng đến cửa hàng"
                         type="object"
                         class="btn-primary"
                         invisible="store_route_type != 'central_to_store' or picking_type_code == 'incoming' or state in ('done', 'cancel')"
@@ -119,7 +119,7 @@
                         invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or wm_damaged_qty &gt; 0 or state in ('done', 'cancel') or wm_qc_status in ['passed', 'rejected']"
                         groups="store_management.group_store_user"/>
                 <button name="action_return_store_damaged_receipt_to_supplier"
-                        string="Xử lý hàng lỗi"
+                        string="Nhập hàng đạt &amp; xử lý lỗi"
                         type="object"
                         class="btn-danger"
                         invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or wm_damaged_qty &lt;= 0 or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
@@ -461,7 +461,7 @@
         <field name="res_model">mer.excess.receipt</field>
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="store_management.view_mer_excess_receipt_list"/>
-        <field name="domain">[('source_route_type', '=', 'central_to_store'), ('state', 'in', ['reported', 'approved', 'returning'])]</field>
+        <field name="domain">[('source_route_type', '=', 'central_to_store'), ('state', '=', 'returning'), ('recovery_picking_id', '!=', False)]</field>
         <field name="context">{'group_by': 'state'}</field>
     </record>
 
@@ -584,7 +584,7 @@
         <field name="inherit_id" ref="store_management.view_picking_form_inherit_store_discrepancy_actions"/>
         <field name="arch" type="xml">
             <xpath expr="//button[@name='action_view_store_discrepancy_reports']" position="attributes">
-                <attribute name="invisible">store_route_type not in ['supplier_to_store', 'central_to_store'] or store_receipt_issue_type not in ['shortage', 'overage', 'mixed', 'damaged_rejected']</attribute>
+                <attribute name="invisible">store_receipt_issue_type not in ['shortage', 'overage', 'mixed', 'damaged_partial', 'damaged_rejected']</attribute>
             </xpath>
             <xpath expr="//button[@name='%(store_management.action_mer_delivery_discrepancy_wizard)d']" position="attributes">
                 <attribute name="invisible">not wm_is_incoming_receipt or state in ('done', 'cancel')</attribute>
@@ -663,6 +663,11 @@
         <field name="context">{'default_reason': 'shortage', 'search_default_submitted_to_merchandise': 1}</field>
     </record>
 
+    <record id="merchandise_management.action_mer_discrepancy_report_damaged" model="ir.actions.act_window">
+        <field name="domain">[('reason', '=', 'damaged'), ('submitted_to_merchandise', '=', True)]</field>
+        <field name="context">{'default_reason': 'damaged', 'search_default_submitted_to_merchandise': 1}</field>
+    </record>
+
     <record id="action_store_discrepancy_report_overage" model="ir.actions.act_window">
         <field name="name">Báo cáo nhận dư hàng</field>
         <field name="res_model">mer.discrepancy.report</field>
@@ -675,7 +680,7 @@
         <field name="name">Báo cáo nhận thiếu hàng</field>
         <field name="res_model">mer.discrepancy.report</field>
         <field name="view_mode">list,form</field>
-        <field name="domain">[('reason', '=', 'shortage'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="domain">[('reason', '=', 'shortage'), ('warehouse_id.mis_role', '=', 'store'), ('state', '=', 'draft'), ('submitted_to_merchandise', '=', False)]</field>
         <field name="context">{'default_reason': 'shortage'}</field>
     </record>
 
@@ -683,24 +688,22 @@
         <field name="name">Báo cáo hàng lỗi</field>
         <field name="res_model">mer.discrepancy.report</field>
         <field name="view_mode">list,form</field>
-        <field name="domain">[('reason', '=', 'damaged'), ('submitted_to_merchandise', '=', True)]</field>
-        <field name="context">{'default_reason': 'damaged', 'search_default_submitted_to_merchandise': 1}</field>
+        <field name="domain">[('reason', '=', 'damaged'), ('warehouse_id.mis_role', '=', 'store'), ('state', '=', 'draft'), ('submitted_to_merchandise', '=', False)]</field>
+        <field name="context">{'default_reason': 'damaged'}</field>
     </record>
 
     <record id="menu_mer_excess_receipt" model="ir.ui.menu">
-        <field name="action" ref="store_management.action_mer_excess_receipt"/>
+        <field name="action" ref="store_management.action_store_excess_receipt_to_submit"/>
     </record>
 
     <record id="merchandise_management.menu_merchandise_discrepancy_excess" model="ir.ui.menu">
-        <field name="action" ref="store_management.action_mer_excess_receipt"/>
+        <field name="action" ref="store_management.action_merchandise_excess_receipt_to_process"/>
     </record>
 
-    <menuitem id="menu_merchandise_discrepancy_damaged"
-              name="Báo cáo hàng lỗi"
-              parent="merchandise_management.menu_merchandise_discrepancy"
-              action="store_management.action_store_discrepancy_report_damaged"
-              sequence="3"
-              groups="merchandise_management.group_merchandise_user"/>
+    <!-- Ghi đè menu Báo cáo hàng lỗi của Merchandise để dùng action của Store (tối ưu cho PR bù hàng) -->
+    <record id="merchandise_management.menu_merchandise_discrepancy_damaged" model="ir.ui.menu">
+        <field name="action" ref="merchandise_management.action_mer_discrepancy_report_damaged"/>
+    </record>
 
     <menuitem id="menu_store_discrepancy_shortage"
               name="Báo cáo nhận thiếu hàng"

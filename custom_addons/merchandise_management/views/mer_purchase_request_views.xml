@@ -8,6 +8,7 @@
             <list string="Chi tiết sản phẩm" editable="bottom">
                 <field name="product_id" string="Sản phẩm"/>
                 <field name="product_qty" string="Số lượng"/>
+                <field name="budget_id" optional="show"/>
                 <field name="product_uom_id" string="Đơn vị" groups="uom.group_uom"/>
                 <field name="price_unit" string="Đơn giá dự kiến"/>
                 <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
@@ -75,12 +76,13 @@
                     <notebook>
                         <page string="Sản phẩm" name="lines">
                             <!-- O2M: Chi tiết sản phẩm -->
-                            <field name="line_ids" readonly="state != 'draft'">
-                                <list editable="bottom">
-                                    <field name="product_id"/>
-                                    <field name="product_qty" string="Số lượng yêu cầu"/>
+                            <field name="line_ids" readonly="state in ['approved', 'po_created', 'done', 'cancel']">
+                                <list editable="bottom" create="state == 'draft'" delete="state == 'draft'">
+                                    <field name="product_id" readonly="parent.state != 'draft'"/>
+                                    <field name="product_qty" string="Số lượng yêu cầu" readonly="parent.state != 'draft'"/>
+                                    <field name="budget_id" optional="show"/>
                                     <field name="product_uom_id" readonly="1"/>
-                                    <field name="price_unit" string="Đơn giá dự kiến"/>
+                                    <field name="price_unit" string="Đơn giá dự kiến" readonly="parent.state != 'draft'"/>
                                     <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>
                                 </list>
                             </field>

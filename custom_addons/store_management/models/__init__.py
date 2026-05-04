@@ -7,5 +7,6 @@ from . import product_template
 from . import sale_order
 from . import stock_picking
 from . import stock_warehouse
+from . import store_vendor_bill
 from . import store_store
 from . import account_move

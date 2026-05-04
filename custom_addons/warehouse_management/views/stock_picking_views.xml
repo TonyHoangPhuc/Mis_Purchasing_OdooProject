@@ -68,7 +68,7 @@
                     >
                         <list editable="bottom" create="false" delete="false">
                             <field name="product_id" readonly="1"/>
-                            <field name="product_uom_qty" string="Số lượng dự kiến"/>
+                            <field name="wm_expected_qty" string="Số lượng dự kiến" readonly="1"/>
                             <field name="quantity" string="Số lượng thực nhận"/>
                             <field name="wm_damaged_qty"/>
                             <field name="wm_damage_note" placeholder="Ghi chú lỗi"/>

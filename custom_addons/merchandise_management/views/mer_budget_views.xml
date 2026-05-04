@@ -10,6 +10,7 @@
                 <field name="category_id"/>
                 <field name="date_from"/>
                 <field name="date_to"/>
+                <field name="usage_start_datetime"/>
                 <field name="budget_amount" sum="Tổng ngân sách"/>
                 <field name="spent_amount" string="Đã thực chi" sum="Tổng đã xài"/>
                 <field name="committed_amount" string="Đã cam kết" sum="Tổng cam kết"/>
@@ -46,6 +47,7 @@
                                 <span>đến</span>
                                 <field name="date_to" widget="daterange" options="{'related_start_date': 'date_from'}"/>
                             </div>
+                            <field name="usage_start_datetime" readonly="1"/>
                         </group>
                     </group>
                     <group string="Theo dõi sử dụng">

@@ -55,6 +55,7 @@ class MerExcessReceipt(models.Model):
             ("approved", "Merchandise đã duyệt"),
             ("returning", "Đang thu hồi hàng"),
             ("done", "Hoàn tất"),
+            ("cancel", "Đã hủy"),
         ],
         string="Trạng thái",
         default="draft",
@@ -107,7 +108,9 @@ class MerExcessReceipt(models.Model):
     @api.depends("state", "central_stock_adjusted", "recovery_picking_id.state")
     def _compute_handling_status(self):
         for rec in self:
-            if rec.state == "done":
+            if rec.state == "cancel":
+                rec.handling_status = _("Đã hủy")
+            elif rec.state == "done":
                 rec.handling_status = _("Đã thu hồi")
             elif rec.recovery_picking_id:
                 rec.handling_status = _("Đang thu hồi")

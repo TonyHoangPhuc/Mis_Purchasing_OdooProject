@@ -54,6 +54,9 @@ class MerDiscrepancyReport(models.Model):
 
     def _compute_handling_status(self):
         for report in self:
+            if report.state == "done":
+                report.handling_status = _("Hoàn tất")
+                continue
             if report.reason == "shortage":
                 if report.replenishment_request_id:
                     report.handling_status = _("Đã tạo PR bù")
@@ -70,6 +73,20 @@ class MerDiscrepancyReport(models.Model):
                     report.handling_status = _("Chờ xử lý hàng lỗi")
             else:
                 report.handling_status = _("Đang xử lý")
+
+    def _mark_done_if_resolved(self):
+        for report in self.filtered(lambda current: current.state == "draft"):
+            if report.reason == "shortage" and report.replenishment_request_id:
+                report.write({"state": "done"})
+            elif (
+                report.reason == "damaged"
+                and report.replenishment_request_id
+                and (
+                    not report.return_picking_id
+                    or report.return_picking_id.state in ("done", "cancel")
+                )
+            ):
+                report.write({"state": "done"})
 
     def action_submit(self):
         self.ensure_one()
@@ -183,6 +200,7 @@ class MerDiscrepancyReport(models.Model):
                 },
             }
         )
+        self._mark_done_if_resolved()
         self.message_post(
             body=_("Merchandise đã tạo PR bù hàng %s từ báo cáo thiếu hàng này.") % request.name,
             subtype_xmlid="mail.mt_note",

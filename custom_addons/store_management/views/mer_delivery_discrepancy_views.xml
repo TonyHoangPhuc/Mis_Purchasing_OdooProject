@@ -34,12 +34,12 @@
                             invisible="state != 'reported'" groups="merchandise_management.group_merchandise_user"/>
                     
                     <button name="action_create_recovery_picking" string="Tạo đơn thu hồi" type="object" class="oe_highlight" 
-                            invisible="state not in ['reported', 'approved']" groups="store_management.group_store_manager,warehouse_management.group_receiving_qc_user"/>
+                            invisible="state not in ['reported', 'approved']" groups="merchandise_management.group_merchandise_user"/>
                     
                     <button name="action_done" string="Xác nhận Kho đã nhận hàng" type="object" class="oe_highlight" 
                             invisible="state != 'returning'" groups="warehouse_management.group_receiving_qc_user"/>
                     
-                    <field name="state" widget="statusbar" statusbar_visible="draft,reported,approved,returning,done"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,reported,approved,returning,done,cancel"/>
                 </header>
                 <sheet>
                     <div class="oe_title">
@@ -102,6 +102,34 @@
         </field>
     </record>
 
+    <record id="action_store_excess_receipt_to_submit" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận dư hàng</field>
+        <field name="res_model">mer.excess.receipt</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_excess_receipt_list"/>
+        <field name="domain">[('state', '=', 'draft'), ('store_id', '!=', False)]</field>
+        <field name="context">{'group_by': 'picking_id'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Chưa có báo cáo nhận dư hàng cần gửi Merchandise.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_merchandise_excess_receipt_to_process" model="ir.actions.act_window">
+        <field name="name">Báo cáo nhận dư hàng</field>
+        <field name="res_model">mer.excess.receipt</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_mer_excess_receipt_list"/>
+        <field name="domain">[('state', 'in', ['reported', 'approved'])]</field>
+        <field name="context">{'group_by': 'picking_id'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Chưa có báo cáo nhận dư hàng cần Merchandise xử lý.
+            </p>
+        </field>
+    </record>
+
     <record id="action_mer_excess_receipt_view_form" model="ir.actions.act_window.view">
         <field name="sequence" eval="2"/>
         <field name="view_mode">form</field>
@@ -113,7 +141,9 @@
         id="menu_mer_excess_receipt"
         name="Báo cáo nhận dư hàng"
         parent="store_management.menu_store_receipts_pending"
-        action="action_mer_excess_receipt"
+        action="action_store_excess_receipt_to_submit"
         sequence="20"
     />
+
+    <!-- Menu Merchandise được quản lý tập trung tại warehouse_management_integration_views.xml -->
 </odoo>

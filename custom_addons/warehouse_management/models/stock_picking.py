@@ -108,7 +108,7 @@ class StockPicking(models.Model):
 
     @api.depends(
         "move_ids",
-        "move_ids.product_uom_qty",
+        "move_ids.wm_expected_qty",
         "move_ids.quantity",
         "move_ids.wm_damaged_qty",
         "move_ids.state",
@@ -116,7 +116,7 @@ class StockPicking(models.Model):
     def _compute_wm_discrepancy_metrics(self):
         for picking in self:
             relevant_moves = picking.move_ids.filtered(lambda move: move.state != "cancel")
-            expected_qty = sum(relevant_moves.mapped("product_uom_qty"))
+            expected_qty = sum(move._get_wm_expected_qty() for move in relevant_moves)
             received_qty = sum(relevant_moves.mapped("quantity"))
             damaged_qty = sum(relevant_moves.mapped("wm_damaged_qty"))
             discrepancy_qty = expected_qty - received_qty
@@ -171,6 +171,10 @@ class StockPicking(models.Model):
                 pickings_to_validate |= picking
             
         if pickings_to_validate:
+            if not self.env.context.get("skip_wm_damaged_received_validation"):
+                pickings_to_validate.mapped("move_ids").filtered(
+                    lambda move: move.state != "cancel"
+                )._validate_wm_damaged_qty_not_over_received()
             res = pickings_to_validate.button_validate()
             
             # Sau khi nhập kho xong, tiến hành tự động tạo hóa đơn
@@ -179,10 +183,16 @@ class StockPicking(models.Model):
                     # 1. Tự động tạo hóa đơn NCC (Vendor Bill) cho PO
                     if picking.purchase_id and picking.purchase_id.invoice_status == 'to invoice':
                         try:
-                            # Sử dụng lệnh tạo hóa đơn từ PO
-                            picking.purchase_id.with_context(create_bill=True).action_create_invoice()
-                        except Exception:
-                            pass
+                            if "store.vendor.bill" in self.env.registry:
+                                self.env["store.vendor.bill"].sudo()._create_from_purchase_orders(picking.purchase_id)
+                            else:
+                                with self.env.cr.savepoint():
+                                    picking.purchase_id.sudo().with_context(create_bill=True).action_create_invoice()
+                        except Exception as e:
+                            picking.message_post(
+                                body=_("Hệ thống không thể tự động tạo hóa đơn NCC cho PO %s: %s")
+                                % (picking.purchase_id.name, str(e))
+                            )
                     
 
 
@@ -214,6 +224,7 @@ class StockPicking(models.Model):
     def _action_process_qc_rejection(self):
         """Nếu reject trước validate thì hủy phiếu để tồn kho không đổi."""
         self.ensure_one()
+        self.move_ids.filtered(lambda move: move.state != "cancel")._validate_wm_damaged_qty_not_over_received()
         if self.state != "done":
             self.action_cancel()
             self.message_post(
@@ -251,7 +262,7 @@ class StockPicking(models.Model):
 
         return_moves = []
         for move in damaged_moves:
-            return_qty = move.wm_damaged_qty if move.wm_damaged_qty > 0 else move.quantity
+            return_qty = move.quantity
             return_moves.append(
                 (
                     0,
