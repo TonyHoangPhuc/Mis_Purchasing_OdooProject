@@ -5,8 +5,12 @@ from . import mer_purchase_request
 from . import product_product
 from . import product_template
 from . import sale_order
+from . import stock_move_line
+from . import stock_lot
 from . import stock_picking
+from . import stock_quant
 from . import stock_warehouse
 from . import store_vendor_bill
 from . import store_store
 from . import account_move
+from . import mer_promotion_line

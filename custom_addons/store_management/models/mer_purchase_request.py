@@ -14,6 +14,11 @@ class MerPurchaseRequest(models.Model):
         string="Cửa hàng yêu cầu",
         tracking=True,
     )
+    x_available_product_ids = fields.Many2many(
+        "product.product",
+        compute="_compute_store_available_products",
+        string="Sản phẩm hợp lệ theo cửa hàng",
+    )
     is_replenishment_from_discrepancy = fields.Boolean(
         string="PR bù từ báo cáo sai lệch",
         default=False,
@@ -113,6 +118,45 @@ class MerPurchaseRequest(models.Model):
     def _onchange_store_id(self):
         if self.store_id:
             self.warehouse_id = self.store_id.warehouse_id
+        return self._remove_unavailable_store_lines()
+
+    def _remove_unavailable_store_lines(self):
+        self.ensure_one()
+        if not self.store_id or not self.line_ids:
+            return
+
+        available_products = self._get_store_available_products()
+        invalid_lines = self.line_ids.filtered(
+            lambda line: line.product_id and line.product_id not in available_products
+        )
+        if not invalid_lines:
+            return
+
+        removed_product_names = ", ".join(invalid_lines.mapped("product_id.display_name"))
+        self.line_ids = self.line_ids - invalid_lines
+        return {
+            "warning": {
+                "title": _("Đã cập nhật sản phẩm theo cửa hàng"),
+                "message": _(
+                    "Đã xóa các sản phẩm không thuộc cửa hàng %(store)s: %(products)s"
+                )
+                % {
+                    "store": self.store_id.display_name,
+                    "products": removed_product_names,
+                },
+            }
+        }
+
+    def _get_store_available_products(self):
+        self.ensure_one()
+        if not self.store_id:
+            return self.env["product.product"]
+        return self.store_id.product_line_ids.filtered("active").mapped("product_id")
+
+    @api.depends("store_id", "store_id.product_line_ids", "store_id.product_line_ids.active", "store_id.product_line_ids.product_id")
+    def _compute_store_available_products(self):
+        for request in self:
+            request.x_available_product_ids = request._get_store_available_products()
 
     @api.onchange("warehouse_id")
     def _onchange_warehouse_id_sync_store(self):
@@ -120,6 +164,7 @@ class MerPurchaseRequest(models.Model):
             store = self.env["store.store"].search([("warehouse_id", "=", self.warehouse_id.id)], limit=1)
             if store:
                 self.store_id = store
+        return self._remove_unavailable_store_lines()
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -431,6 +476,20 @@ class MerPurchaseRequest(models.Model):
                 )
             )
 
+        resolved_discrepancy_report = bool(
+            line.store_receipt_picking_id
+            and self.env["mer.discrepancy.report"].search(
+                [
+                    ("picking_id", "=", line.store_receipt_picking_id.id),
+                    ("product_id", "=", line.product_id.id),
+                    ("reason", "in", ["damaged", "shortage"]),
+                    ("replenishment_request_id", "!=", False),
+                    ("state", "!=", "cancel"),
+                ],
+                limit=1,
+            )
+        )
+
         if line.fulfillment_method == "supplier_central":
             if not line.purchase_order_id:
                 return False
@@ -439,14 +498,37 @@ class MerPurchaseRequest(models.Model):
                 and picking.picking_type_id.warehouse_id
                 and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
             )
+            resolved_central_issue_report = bool(
+                receipt_pickings
+                and self.env["mer.discrepancy.report"].search(
+                    [
+                        ("picking_id", "in", receipt_pickings.ids),
+                        ("product_id", "=", line.product_id.id),
+                        ("reason", "in", ["damaged", "shortage"]),
+                        ("state", "!=", "cancel"),
+                        ("replenishment_request_id", "!=", False),
+                    ],
+                    limit=1,
+                )
+            )
             if receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
+                return resolved_central_issue_report
+            if (
+                resolved_central_issue_report
+                and receipt_pickings.filtered(
+                    lambda picking: picking.state in ("done", "cancel")
+                    or picking.wm_qc_status in ("passed", "rejected")
+                )
+            ):
                 return True
             if not receipt_pickings.filtered(lambda picking: picking.state == "done"):
                 return False
+            if resolved_discrepancy_report:
+                return True
             return line.internal_flow_state in ("delivered", "rejected")
 
         if line.fulfillment_method == "internal":
-            return line.internal_flow_state in ("delivered", "rejected")
+            return line.internal_flow_state in ("delivered", "rejected") or resolved_discrepancy_report
 
         return False
 
@@ -461,6 +543,17 @@ class MerPurchaseRequest(models.Model):
 
             all_completed = all(request._is_line_logistically_completed(line) for line in lines)
             has_started_documents = any(line.purchase_order_id or line.internal_picking_id for line in lines)
+            has_processing_signals = has_started_documents or any(
+                line.internal_flow_state in (
+                    "pending_check",
+                    "ready_delivery",
+                    "waiting_receipt",
+                    "waiting_stock",
+                    "waiting_delivery",
+                    "waiting_store_receipt",
+                )
+                for line in lines
+            )
             
             if all_completed:
                 request.state = "done"
@@ -618,6 +711,7 @@ class MerPurchaseRequest(models.Model):
         if not valid_requests:
             raise UserError(_("Không có sản phẩm nào hợp lệ để trình duyệt (Tất cả đều bằng 0 hoặc đã dừng đặt hàng). Vui lòng kiểm tra lại tab Phân tích tồn kho."))
 
+        valid_requests._validate_budget_selection()
         valid_requests._validate_merchandise_processing()
         return super(MerPurchaseRequest, valid_requests).action_send_to_manager()
 
@@ -857,6 +951,75 @@ class MerPurchaseRequest(models.Model):
                 )
                 for line in internal_lines
             )
+            resolved_central_issue_keys = set()
+            pending_merch_central_issue_keys = set()
+            if internal_lines:
+                central_receipt_pickings = internal_lines.mapped("purchase_order_id.picking_ids").filtered(
+                    lambda picking: picking.picking_type_code == "incoming"
+                    and picking.picking_type_id.warehouse_id
+                    and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
+                )
+                resolved_central_reports = self.env["mer.discrepancy.report"].search(
+                    [
+                        ("picking_id", "in", central_receipt_pickings.ids),
+                        ("product_id", "in", internal_lines.mapped("product_id").ids),
+                        ("reason", "in", ["damaged", "shortage"]),
+                        ("state", "!=", "cancel"),
+                        ("replenishment_request_id", "!=", False),
+                    ]
+                )
+                resolved_central_issue_keys = {
+                    (report.picking_id.purchase_id.id, report.product_id.id)
+                    for report in resolved_central_reports
+                    if report.picking_id.purchase_id
+                }
+                pending_merch_central_reports = self.env["mer.discrepancy.report"].search(
+                    [
+                        ("picking_id", "in", central_receipt_pickings.ids),
+                        ("product_id", "in", internal_lines.mapped("product_id").ids),
+                        ("reason", "in", ["damaged", "shortage"]),
+                        ("state", "!=", "cancel"),
+                        ("submitted_to_merchandise", "=", True),
+                        ("replenishment_request_id", "=", False),
+                    ]
+                )
+                pending_merch_central_issue_keys = {
+                    (report.picking_id.purchase_id.id, report.product_id.id)
+                    for report in pending_merch_central_reports
+                    if report.picking_id.purchase_id
+                }
+            resolved_damaged_keys = set()
+            if internal_lines:
+                resolved_damaged_reports = self.env["mer.discrepancy.report"].search(
+                    [
+                        ("picking_id", "in", internal_lines.mapped("store_receipt_picking_id").ids),
+                        ("product_id", "in", internal_lines.mapped("product_id").ids),
+                        ("reason", "=", "damaged"),
+                        ("replenishment_request_id", "!=", False),
+                        ("state", "!=", "cancel"),
+                    ]
+                )
+                resolved_damaged_keys = {
+                    (report.picking_id.id, report.product_id.id)
+                    for report in resolved_damaged_reports
+                }
+            resolved_shortage_keys = set()
+            if internal_lines:
+                resolved_shortage_reports = self.env["mer.discrepancy.report"].search(
+                    [
+                        ("picking_id", "in", internal_lines.mapped("store_receipt_picking_id").ids),
+                        ("product_id", "in", internal_lines.mapped("product_id").ids),
+                        ("reason", "=", "shortage"),
+                        ("replenishment_request_id", "!=", False),
+                        ("state", "!=", "cancel"),
+                    ]
+                )
+                resolved_shortage_keys = {
+                    (report.picking_id.id, report.product_id.id)
+                    for report in resolved_shortage_reports
+                }
+            resolved_issue_keys = resolved_damaged_keys | resolved_shortage_keys
+            has_resolved_issue = bool(has_rejected_line or resolved_issue_keys or resolved_central_issue_keys)
 
             if not internal_lines:
                 request.central_flow_status = _("Không qua Kho tổng")
@@ -867,15 +1030,49 @@ class MerPurchaseRequest(models.Model):
             elif request.ready_delivery_count:
                 request.central_flow_status = _("\u0110\u1ee7 h\u00e0ng, ch\u1edd x\u00e1c nh\u1eadn giao")
             elif waiting_receipt_count:
-                request.central_flow_status = _("Chờ NCC giao Kho tổng")
+                pending_merch_waiting_receipt = any(
+                    line.fulfillment_method == "supplier_central"
+                    and line.purchase_order_id
+                    and (line.purchase_order_id.id, line.product_id.id) in pending_merch_central_issue_keys
+                    for line in internal_lines
+                )
+                unresolved_waiting_receipt = any(
+                    line.fulfillment_method == "supplier_central"
+                    and line.purchase_order_id
+                    and (line.purchase_order_id.id, line.product_id.id) not in resolved_central_issue_keys
+                    and (line.purchase_order_id.id, line.product_id.id) not in pending_merch_central_issue_keys
+                    and not line.purchase_order_id.picking_ids.filtered(
+                        lambda picking: picking.picking_type_code == "incoming"
+                        and picking.picking_type_id.warehouse_id
+                        and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
+                        and (picking.state == "done" or picking.wm_qc_status == "rejected")
+                    )
+                    for line in internal_lines
+                )
+                if pending_merch_waiting_receipt and not unresolved_waiting_receipt:
+                    request.central_flow_status = _("Chờ Merchandise tạo đơn PR bù hàng")
+                else:
+                    request.central_flow_status = _("Chờ NCC giao Kho tổng") if unresolved_waiting_receipt else _("Đã xử lý xong")
+            elif pending_merch_central_issue_keys:
+                request.central_flow_status = _("Chờ Merchandise tạo đơn PR bù hàng")
             elif request.waiting_delivery_count:
                 request.central_flow_status = _("Chờ Kho tổng giao hàng")
-            elif waiting_store_receipt_count:
+            elif any(
+                line.internal_flow_state == "waiting_store_receipt"
+                and line.store_receipt_picking_id
+                and line.store_receipt_picking_id.state not in ("done", "cancel")
+                and (line.store_receipt_picking_id.id, line.product_id.id) not in resolved_issue_keys
+                for line in internal_lines
+            ):
                 request.central_flow_status = _("Chờ cửa hàng nhận hàng")
+            elif all(request._is_line_logistically_completed(line) for line in internal_lines):
+                request.central_flow_status = (
+                    _("Đã xử lý xong")
+                    if has_resolved_issue
+                    else _("Đã giao hàng về cửa hàng")
+                )
             elif has_rejected_line:
                 request.central_flow_status = _("Có lô hàng lỗi")
-            elif all(request._is_line_logistically_completed(line) for line in internal_lines):
-                request.central_flow_status = _("Đã giao hàng về cửa hàng")
             else:
                 request.central_flow_status = _("Đang xử lý")
 
@@ -1202,6 +1399,7 @@ class MerPurchaseRequestLine(models.Model):
     )
     def _compute_supply_metrics(self):
         quant_model = self.env["stock.quant"].sudo()
+        current_dt = fields.Datetime.now()
         for line in self:
             line.central_on_hand_qty = 0.0
             line.central_available_qty = 0.0
@@ -1224,6 +1422,11 @@ class MerPurchaseRequestLine(models.Model):
                 store_quants = quant_model.search([
                     ("product_id", "=", line.product_id.id),
                     ("location_id", "child_of", line.request_id.warehouse_id.lot_stock_id.id),
+                    "|",
+                    ("lot_id", "=", False),
+                    "|",
+                    ("lot_id.expiration_date", "=", False),
+                    ("lot_id.expiration_date", ">", current_dt),
                 ])
                 line.store_on_hand_qty = sum(store_quants.mapped("quantity"))
 
@@ -1239,6 +1442,11 @@ class MerPurchaseRequestLine(models.Model):
                 source_quants = quant_model.search([
                     ("product_id", "=", line.product_id.id),
                     ("location_id", "child_of", line.source_warehouse_id.lot_stock_id.id),
+                    "|",
+                    ("lot_id", "=", False),
+                    "|",
+                    ("lot_id.expiration_date", "=", False),
+                    ("lot_id.expiration_date", ">", current_dt),
                 ])
                 line.source_available_qty = sum(source_quants.mapped("quantity"))
 
@@ -1247,6 +1455,11 @@ class MerPurchaseRequestLine(models.Model):
                 quants = quant_model.search([
                     ("product_id", "=", line.product_id.id),
                     ("location_id", "child_of", warehouse.lot_stock_id.id),
+                    "|",
+                    ("lot_id", "=", False),
+                    "|",
+                    ("lot_id.expiration_date", "=", False),
+                    ("lot_id.expiration_date", ">", current_dt),
                 ])
                 
                 qty = sum(quants.mapped("quantity"))
@@ -1277,8 +1490,9 @@ class MerPurchaseRequestLine(models.Model):
     @api.depends("product_qty", "approved_qty", "price_unit")
     def _compute_price_subtotal(self):
         for line in self:
-            # Ưu tiên sử dụng Số lượng được duyệt để tính Thành tiền
-            qty = line.approved_qty if line.approved_qty > 0 or line.request_id.state != 'draft' else line.product_qty
+            # Trước khi được duyệt thực sự, vẫn tính tiền theo số lượng yêu cầu.
+            # Chỉ chuyển sang số lượng được duyệt khi người dùng đã nhập số đó.
+            qty = line.approved_qty if line.approved_qty > 0 else line.product_qty
             line.price_subtotal = qty * line.price_unit
 
     def action_view_supply_stock(self):
@@ -1294,7 +1508,13 @@ class MerPurchaseRequestLine(models.Model):
             "domain": [
                 ("product_id", "=", self.product_id.id),
                 ("location_id", "child_of", locations),
+                "|",
+                ("lot_id", "=", False),
+                "|",
+                ("lot_id.expiration_date", "=", False),
+                ("lot_id.expiration_date", ">", fields.Datetime.now()),
             ],
+            "context": {"search_default_not_expired_lots": 1},
         }
 
     def action_fallback_to_supplier(self):
@@ -1413,7 +1633,32 @@ class MerPurchaseRequestLine(models.Model):
                         and picking.picking_type_id.warehouse_id
                         and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
                     )
-                    if receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
+                    pending_merch_central_issue = self.env["mer.discrepancy.report"].search(
+                        [
+                            ("picking_id", "in", receipt_pickings.ids),
+                            ("product_id", "=", line.product_id.id),
+                            ("reason", "in", ["damaged", "shortage"]),
+                            ("state", "!=", "cancel"),
+                            ("submitted_to_merchandise", "=", True),
+                            ("replenishment_request_id", "=", False),
+                        ],
+                        limit=1,
+                    )
+                    resolved_central_issue = self.env["mer.discrepancy.report"].search(
+                        [
+                            ("picking_id", "in", receipt_pickings.ids),
+                            ("product_id", "=", line.product_id.id),
+                            ("reason", "in", ["damaged", "shortage"]),
+                            ("state", "!=", "cancel"),
+                            ("replenishment_request_id", "!=", False),
+                        ],
+                        limit=1,
+                    )
+                    if resolved_central_issue:
+                        status = _("Đã xử lý xong")
+                    elif pending_merch_central_issue:
+                        status = _("Chờ Merchandise tạo đơn PR bù hàng")
+                    elif receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
                         status = _("Kho tổng QC không đạt")
                     elif line.store_receipt_picking_id and line.store_receipt_picking_id.state == "done":
                         status = _("Cửa hàng đã nhận hàng")

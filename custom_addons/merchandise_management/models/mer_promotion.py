@@ -138,7 +138,7 @@ class MerPromotion(models.Model):
                     product = self.env['product.product'].browse(product_id)
                     total_line_vals.append((0, 0, {
                         'product_id': product_id,
-                        'discount_rate': product.x_mer_expiry_discount or 20.0,
+                        'discount_rate': 0.0,
                         'limit_qty': qty
                     }))
             
@@ -146,7 +146,7 @@ class MerPromotion(models.Model):
                 self.write({'line_ids': total_line_vals})
             # Sau khi ghi xong, tính lại tổng tồn dựa trên các dòng thực tế
             total_qty = sum(self.line_ids.mapped('qty_in_stores'))
-            product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in self.line_ids])
+            product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in self.line_ids if l.qty_in_stores > 0])
             actual_locations = store_quants.filtered(lambda q: q.lot_id in valid_lots).mapped('location_id')
             msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s tại %s.\n%s") % (
                 len(valid_lots), total_qty, ", ".join(actual_locations.mapped('display_name')), product_details
@@ -183,6 +183,8 @@ class MerPromotion(models.Model):
         for promo in active_promotions:
             for line in promo.line_ids:
                 if not line.product_id:
+                    continue
+                if line.limit_qty > 0 and (line.limit_qty - line.sold_qty) <= 0:
                     continue
                 price = line.product_id.lst_price * (1 - (line.discount_rate / 100.0))
                 if line.product_id.id not in promo_data or price < promo_data[line.product_id.id]['price']:
@@ -334,7 +336,7 @@ class MerPromotion(models.Model):
             
             # Sau khi tạo xong, tính lại tổng tồn kho thực tế của các dòng để ghi vào mô tả
             total_qty_actual = sum(new_promo.line_ids.mapped('qty_in_stores'))
-            product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in new_promo.line_ids])
+            product_details = "\n".join([_(" • %s: %s") % (l.product_id.name, l.qty_in_stores) for l in new_promo.line_ids if l.qty_in_stores > 0])
             actual_locations = store_quants.filtered(lambda q: q.lot_id.id in all_lot_ids).mapped('location_id')
             msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s tại %s.\n%s") % (
                 len(products_map), total_qty_actual, ", ".join(actual_locations.mapped('display_name')), product_details
@@ -371,12 +373,39 @@ class MerPromotion(models.Model):
             if promotion.date_start and promotion.date_start > promotion.date_end:
                 raise UserError(_("Lỗi ngày tháng: Ngày bắt đầu (%s) không thể sau ngày kết thúc (%s).") % (promotion.date_start, promotion.date_end))
 
-            promotion.write({'state': 'active'})
+            # Kiểm tra tồn kho chi tiết từng cửa hàng trước khi kích hoạt
+            error_details = []
+            for line in promotion.line_ids:
+                for warehouse in promotion.target_store_ids:
+                    # Lấy tồn kho thực tế của sản phẩm tại kho cụ thể này
+                    product_with_context = line.product_id.with_context(location=warehouse.lot_stock_id.id)
+                    store_qty = product_with_context.qty_available
+                    
+                    if store_qty <= 0:
+                        error_details.append(_("- Sản phẩm '%s' tại cửa hàng '%s'") % (line.product_id.name, warehouse.name))
             
+            if error_details:
+                error_msg = "\n".join(error_details)
+                raise UserError(_("Không thể kích hoạt vì các sản phẩm sau đang hết hàng tại cửa hàng tương ứng:\n%s\n\nVui lòng nhập thêm hàng hoặc bỏ cửa hàng/sản phẩm này ra khỏi danh sách.") % error_msg)
+
+            promotion.write({'state': 'active'})
             # Cập nhật giá sản phẩm ngay lập tức
-            # Sử dụng line_ids trực tiếp để tránh lỗi cache
             products = promotion.line_ids.mapped('product_id')
             self._update_product_prices(products=products)
+
+    def _all_limited_lines_exhausted(self):
+        self.ensure_one()
+        limited_lines = self.line_ids.filtered(lambda line: line.limit_qty > 0)
+        return bool(limited_lines) and all((line.limit_qty - line.sold_qty) <= 0 for line in limited_lines)
+
+    def _check_and_expire(self):
+        """Kết thúc chương trình khi tất cả các dòng có giới hạn đã hết số lượng."""
+        for promotion in self:
+            if promotion.state != 'active':
+                continue
+
+            if promotion._all_limited_lines_exhausted():
+                promotion.action_expire()
             
             # Gửi thông báo
             if promotion.state == 'active': # Chỉ gửi nếu chưa bị chuyển sang expired ngay
@@ -424,9 +453,18 @@ class MerPromotion(models.Model):
     # Kết thúc sớm chương trình KM
     def action_expire(self):
         for record in self:
-            products = record.product_ids
+            # Lấy danh sách sản phẩm trước khi chuyển trạng thái
+            products = record.line_ids.mapped('product_id')
             record.write({'state': 'expired'})
-            self._update_product_prices(products=products)
+            
+            # Ép giá về 0 ngay lập tức cho các sản phẩm trong chương trình này
+            if products:
+                products.write({
+                    'current_promotion_price': 0.0,
+                    'current_promotion_line_id': False
+                })
+                # Sau đó mới gọi update để tìm KM khác tốt nhất còn hiệu lực (nếu có)
+                self._update_product_prices(products=products)
 class MerPromotionLineLegacy(models.Model):
     _register = False
     _name = 'mer.promotion.line.legacy'
@@ -458,6 +496,3 @@ class MerPromotionLineLegacy(models.Model):
                 ('quantity', '>', 0)
             ])
             line.qty_in_stores = sum(quants.mapped('quantity'))
-
-
-

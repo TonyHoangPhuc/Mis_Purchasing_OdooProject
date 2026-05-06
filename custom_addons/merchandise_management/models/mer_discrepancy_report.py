@@ -11,6 +11,7 @@ class MerDiscrepancyReport(models.Model):
     
     state = fields.Selection([
         ('draft', 'Mới'),
+        ('reported', 'Chờ Merchandise duyệt'),
         ('done', 'Hoàn tất'),
         ('cancel', 'Hủy')
     ], string='Trạng thái', default='draft', tracking=True)
@@ -84,6 +85,7 @@ class MerDiscrepancyReport(models.Model):
             )
         self.write({'state': 'done'})
 
+
     # Kiểm tra tính đúng đắn giữa số lượng và lý do
     @api.constrains('expected_qty', 'actual_qty', 'reason')
     def _check_qty_reason_consistency(self):
@@ -102,8 +104,8 @@ class MerDiscrepancyReport(models.Model):
         elif self.actual_qty < self.expected_qty:
             self.reason = 'shortage'
             
-        if self.state != 'draft':
-            raise UserError(_("Bạn chỉ có thể tạo PO bù hàng khi báo cáo đang ở trạng thái Nháp."))
+        if self.state != 'reported':
+            raise UserError(_("Bạn chỉ có thể tạo PO bù hàng khi báo cáo đã được Gửi Merchandise (chờ duyệt)."))
         
         if not self.purchase_id:
             raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (PO nguồn) trước khi tạo PO bù hàng."))
@@ -189,8 +191,8 @@ class MerDiscrepancyReport(models.Model):
     # Tạo PR bù hàng thiếu hoặc hàng lỗi
     def action_create_replenishment_pr(self):
         self.ensure_one()
-        if self.state != 'draft':
-            raise UserError(_("Bạn chỉ có thể tạo PR bù hàng khi báo cáo đang ở trạng thái Nháp."))
+        if self.state != 'reported':
+            raise UserError(_("Bạn chỉ có thể tạo PR bù hàng khi báo cáo đã được Gửi Merchandise (chờ duyệt)."))
         
         if self.reason not in ('shortage', 'damaged'):
             raise UserError(_("Chỉ có thể tạo PR bù hàng cho trường hợp Hàng thiếu hoặc Hàng lỗi."))
@@ -252,8 +254,8 @@ class MerDiscrepancyReport(models.Model):
         elif self.actual_qty < self.expected_qty:
             self.reason = 'shortage'
 
-        if self.state != 'draft':
-            raise UserError(_("Bạn chỉ có thể tạo Phiếu thu hồi khi báo cáo đang ở trạng thái Nháp."))
+        if self.state != 'reported':
+            raise UserError(_("Bạn chỉ có thể tạo Phiếu thu hồi khi báo cáo đã được Gửi Merchandise (chờ duyệt)."))
         
         if not self.purchase_id:
             raise UserError(_("Vui lòng chọn Đơn mua hàng liên quan (PO nguồn) trước khi tạo phiếu thu hồi."))

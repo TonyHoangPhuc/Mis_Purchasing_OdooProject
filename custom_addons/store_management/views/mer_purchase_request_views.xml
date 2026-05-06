@@ -72,6 +72,7 @@
                     options="{'no_create_edit': False}"
                     readonly="context.get('from_store_menu') and state != 'draft'"
                 />
+                <field name="x_available_product_ids" invisible="1"/>
             </xpath>
             <xpath expr="//field[@name='warehouse_id']" position="attributes">
                 <attribute name="string">Kho cửa hàng</attribute>
@@ -85,6 +86,10 @@
             </xpath>
             <xpath expr="//field[@name='notes']" position="attributes">
                 <attribute name="readonly">context.get('from_store_menu') and state != 'draft'</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='payment_term_id']" position="attributes">
+                <attribute name="invisible">store_id != False or is_replenishment_from_discrepancy</attribute>
             </xpath>
 
             <xpath expr="//field[@name='manager_id']" position="after">
@@ -528,4 +533,24 @@
         <field name="domain">[('store_id', '!=', False)]</field>
         <field name="context">{'search_default_processing': 1}</field>
     </record>
+    <record id="view_mer_purchase_request_search_inherit_store" model="ir.ui.view">
+        <field name="name">mer.purchase.request.search.inherit.store</field>
+        <field name="model">mer.purchase.request</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_purchase_request_search_enhanced"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='draft']" position="attributes">
+                <attribute name="domain">[('state','=','draft'), ('store_id', '=', False)]</attribute>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="merchandise_management.action_mer_purchase_request" model="ir.actions.act_window">
+        <field name="name">Yêu cầu PR</field>
+        <field name="res_model">mer.purchase.request</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="view_id" ref="merchandise_management.view_mer_purchase_request_kanban"/>
+        <field name="search_view_id" ref="merchandise_management.view_mer_purchase_request_search_enhanced"/>
+        <field name="domain">['|', ('state', '!=', 'draft'), ('store_id', '=', False)]</field>
+    </record>
+
 </odoo>

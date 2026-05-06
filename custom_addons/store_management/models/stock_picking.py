@@ -13,6 +13,7 @@ class StockPicking(models.Model):
         compute_sudo=True,
         store=True,
     )
+
     store_route_type = fields.Selection(
         [
             ("supplier_to_central", "NCC -> Kho tổng"),
@@ -66,6 +67,21 @@ class StockPicking(models.Model):
         compute="_compute_store_delivery_visibility",
         compute_sudo=True,
         store=True,
+    )
+    store_use_stock_action_rules = fields.Boolean(
+        string="Store Use Stock Action Rules",
+        compute="_compute_store_stock_action_visibility",
+        compute_sudo=True,
+    )
+    store_can_check_availability = fields.Boolean(
+        string="Store Can Check Availability",
+        compute="_compute_store_stock_action_visibility",
+        compute_sudo=True,
+    )
+    store_can_validate_delivery = fields.Boolean(
+        string="Store Can Validate Delivery",
+        compute="_compute_store_stock_action_visibility",
+        compute_sudo=True,
     )
     wm_has_shortage_alert = fields.Boolean(
         string="Thiếu hàng từ nguồn",
@@ -363,6 +379,58 @@ class StockPicking(models.Model):
             )
 
     @api.depends(
+        "state",
+        "store_route_type",
+        "picking_type_code",
+        "location_id.warehouse_id",
+        "move_ids.state",
+        "move_ids.picked",
+        "move_ids.quantity",
+        "move_ids.product_uom_qty",
+        "move_ids.product_uom.rounding",
+    )
+    def _compute_store_stock_action_visibility(self):
+        for picking in self:
+            picking.store_use_stock_action_rules = False
+            picking.store_can_check_availability = False
+            picking.store_can_validate_delivery = False
+
+            is_store_sale_delivery = bool(
+                picking.picking_type_code == "outgoing"
+                and picking.location_id.warehouse_id
+                and picking.location_id.warehouse_id.mis_role == "store"
+            )
+            is_central_to_store_delivery = picking.store_route_type == "central_to_store"
+            picking.store_use_stock_action_rules = is_store_sale_delivery or is_central_to_store_delivery
+
+            if not picking.store_use_stock_action_rules or picking.state not in ("confirmed", "waiting", "assigned"):
+                continue
+
+            active_moves = picking.move_ids.filtered(
+                lambda move: move.state not in ("done", "cancel")
+                and float_compare(
+                    move.product_uom_qty,
+                    0.0,
+                    precision_rounding=move.product_uom.rounding or 0.01,
+                ) > 0
+            )
+            if not active_moves:
+                continue
+
+            has_shortage = any(
+                not move.picked
+                and float_compare(
+                    move.quantity,
+                    move.product_uom_qty,
+                    precision_rounding=move.product_uom.rounding or 0.01,
+                ) < 0
+                for move in active_moves
+            )
+
+            picking.store_can_check_availability = has_shortage
+            picking.store_can_validate_delivery = picking.state == "assigned" and not has_shortage
+
+    @api.depends(
         "store_actual_check_done",
         "wm_expected_qty",
         "wm_received_qty",
@@ -399,7 +467,9 @@ class StockPicking(models.Model):
         "picking_type_code",
         "picking_type_id.warehouse_id",
         "location_id.warehouse_id",
+        "location_id.usage",
         "location_dest_id.warehouse_id",
+        "location_dest_id.usage",
         "partner_id",
         "purchase_id",
         "origin",
@@ -422,10 +492,8 @@ class StockPicking(models.Model):
                 picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id
                 and picking.picking_type_id.warehouse_id.mis_role == "central"
-                and picking.mer_request_id
-                and picking.mer_request_id.store_id
+                and (picking.purchase_id or picking.location_id.usage == "supplier")
             ):
-                store = picking.mer_request_id.store_id
                 route_type = "supplier_to_central"
                 route_label = _("NCC -> Kho tổng")
                 source_party = picking.partner_id.display_name or _("Nhà cung cấp")
@@ -569,6 +637,8 @@ class StockPicking(models.Model):
             if any(move.wm_damaged_qty > 0 for move in active_moves):
                 raise UserError(_("Phiếu có hàng hư hỏng. Vui lòng dùng nút Trả hàng NCC để từ chối toàn bộ lô hàng lỗi."))
                 continue
+
+            picking._ensure_tracked_products_have_lots_before_receipt()
 
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
@@ -859,6 +929,11 @@ class StockPicking(models.Model):
             "merchandise_management.action_mer_discrepancy_report"
         )
         action["domain"] = [("picking_id", "=", self.id)]
+        action["context"] = {
+            "default_picking_id": self.id,
+            "search_default_picking_id": self.id,
+            "from_store_menu": True,
+        }
         if len(reports) == 1:
             action.update(
                 {
@@ -1103,8 +1178,6 @@ class StockPicking(models.Model):
                         report.write(vals)
                     else:
                         report = self.env["mer.excess.receipt"].create(vals)
-                    if self._is_store_receipt_from_central() and report.state == "draft":
-                        report.sudo().action_submit()
                 else:
                     self.message_post(
                         body=_("<b>Từ chối dư hàng (Sản phẩm %s):</b> Phát hiện dư %s cái so với chứng từ. Do luồng nhận từ NCC, hệ thống tự động hoàn trả xe và chỉ nhập kho số lượng đúng PO.") % (
@@ -1478,6 +1551,8 @@ class StockPicking(models.Model):
                 picking._return_store_damaged_receipt_to_supplier()
                 continue
 
+            picking._ensure_tracked_products_have_lots_before_receipt()
+
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
                 create_excess_report=True,
@@ -1504,14 +1579,23 @@ class StockPicking(models.Model):
                 )
                 continue
 
-            if picking.wm_qc_status == "draft":
-                picking.wm_qc_status = "checking"
-            picking.with_context(
-                skip_immediate=True,
-                skip_backorder=True,
-                cancel_backorder=True,
-                picking_ids_not_to_backorder=picking.ids,
-            ).action_qc_pass()
+            if picking.wm_qc_status == "passed":
+                picking.with_context(
+                    skip_immediate=True,
+                    skip_backorder=True,
+                    cancel_backorder=True,
+                    picking_ids_not_to_backorder=picking.ids,
+                ).button_validate()
+                picking._auto_create_vendor_bills_after_store_receipt()
+            else:
+                if picking.wm_qc_status == "draft":
+                    picking.wm_qc_status = "checking"
+                picking.with_context(
+                    skip_immediate=True,
+                    skip_backorder=True,
+                    cancel_backorder=True,
+                    picking_ids_not_to_backorder=picking.ids,
+                ).action_qc_pass()
 
             if issue_type == "overage":
                 picking.message_post(
@@ -1709,6 +1793,18 @@ class StockPicking(models.Model):
         result = super().button_validate()
         completed_pickings = self.filtered(lambda picking: picking.state == "done")
         if completed_pickings:
+            completed_sale_pickings = completed_pickings.filtered(lambda picking: picking.sale_id)
+            if completed_sale_pickings:
+                promotion_lines = completed_sale_pickings.mapped("sale_id.order_line.promotion_line_id").sudo()
+                promotions = promotion_lines.mapped("promotion_id")
+                products = promotion_lines.mapped("product_id")
+                if promotion_lines:
+                    promotion_lines.invalidate_recordset(["sold_qty", "reserved_qty", "remaining_qty"])
+                if products:
+                    self.env["mer.promotion"].sudo()._update_product_prices(products=products)
+                if promotions:
+                    promotions.sudo()._check_and_expire()
+
             completed_pickings._mark_central_receipts_ready_for_delivery_check()
             request_line_model = self.env["mer.purchase.request.line"]
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <templates xml:space="preserve">
     <t t-name="merchandise_management.Dashboard">
-        <div class="o_merchandise_dashboard" style="padding: 24px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); min-height: 100vh;">
+            <div class="o_merchandise_dashboard" style="padding: 24px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); min-height: 100vh; height: 100%; overflow-y: auto; overflow-x: hidden;">
             <t t-if="state.loading">
                 <div class="text-center py-5">
                     <i class="fa fa-spinner fa-spin fa-3x text-primary"/>

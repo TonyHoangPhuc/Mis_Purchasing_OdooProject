@@ -6,18 +6,21 @@
         <field name="arch" type="xml">
             <list string="Báo cáo nhận dư hàng" sample="1">
                 <field name="name" decoration-bf="1"/>
+                <field name="date_report" string="Ngày ghi nhận"/>
                 <field name="picking_id" optional="show"/>
-                <field name="store_id" optional="show"/>
-                <field name="source_route_label" string="Nguồn phát sinh" optional="show"/>
-                <field name="date_report" string="Ngày báo cáo"/>
-                <field name="expected_qty" sum="Tổng dự kiến"/>
-                <field name="actual_qty" sum="Tổng thực tế"/>
+                <field name="origin_request_id" string="PR gốc" optional="show"/>
+                <field name="source_route_label" string="Luồng hàng" optional="show"/>
+                <field name="handling_status" string="Tình trạng xử lý" optional="show"/>
+                <field name="recovery_picking_id" string="Phiếu thu hồi" optional="show"/>
+                <field name="display_store_name" string="Cửa hàng" optional="show"/>
+                <field name="product_id" optional="show"/>
+                <field name="expected_qty" string="SL hệ thống" sum="Tổng dự kiến"/>
+                <field name="actual_qty" string="SL thực tế" sum="Tổng thực tế"/>
                 <field name="discrepancy_qty" sum="Tổng dư" decoration-danger="discrepancy_qty > 0" decoration-bf="discrepancy_qty > 0"/>
-                <field name="handling_status" string="Tình trạng"/>
-                <field name="state" widget="badge" 
-                    decoration-info="state == 'reported'" 
-                    decoration-success="state == 'approved' or state == 'done'"
-                    decoration-warning="state == 'returning'"/>
+                <field name="status_badge" widget="badge"
+                    decoration-info="status_badge == 'new'"
+                    decoration-success="status_badge == 'done'"
+                    decoration-danger="status_badge == 'cancel'"/>
             </list>
         </field>
     </record>
@@ -30,14 +33,14 @@
                 <header>
                     <button name="action_submit" string="Gửi Merchandise" type="object" class="oe_highlight" invisible="state != 'draft'" groups="store_management.group_store_user"/>
                     
-                    <button name="action_merchandise_approve" string="Phê duyệt &amp; Hiệu chỉnh kho" type="object" class="oe_highlight" 
-                            invisible="state != 'reported'" groups="merchandise_management.group_merchandise_user"/>
+                    <button name="action_merchandise_approve" string="Phê duyệt" type="object" class="oe_highlight" 
+                            invisible="context.get('from_store_menu') or state != 'reported'" groups="merchandise_management.group_merchandise_user"/>
                     
                     <button name="action_create_recovery_picking" string="Tạo đơn thu hồi" type="object" class="oe_highlight" 
                             invisible="state not in ['reported', 'approved']" groups="merchandise_management.group_merchandise_user"/>
                     
                     <button name="action_done" string="Xác nhận Kho đã nhận hàng" type="object" class="oe_highlight" 
-                            invisible="state != 'returning'" groups="warehouse_management.group_receiving_qc_user"/>
+                            invisible="context.get('from_store_menu') or context.get('from_merchandise_menu') or state != 'returning'" groups="warehouse_management.group_receiving_qc_user"/>
                     
                     <field name="state" widget="statusbar" statusbar_visible="draft,reported,approved,returning,done,cancel"/>
                 </header>
@@ -50,32 +53,45 @@
                     </div>
                     <group>
                         <group string="Tham chiếu" name="reference">
-                            <field name="picking_id" options="{'no_open': False}" readonly="state != 'draft'"/>
-                            <field name="store_id"/>
-                            <field name="source_route_label" readonly="1"/>
-                            <field name="product_id" options="{'no_open': True}" readonly="state != 'draft'"/>
+                            <field name="date_report" string="Ngày ghi nhận" readonly="1"/>
+                            <field name="display_store_name" string="Cửa hàng" readonly="1"/>
+                            <field name="create_uid" string="Người báo cáo" readonly="1"/>
+                            <field name="picking_id" options="{'no_open': False}" readonly="1"/>
                         </group>
-                        <group string="Đối soát số lượng" name="quantities">
-                            <label for="expected_qty" string="Số lượng"/>
-                            <div class="o_row">
-                                <field name="expected_qty" readonly="state != 'draft'"/>
-                                <span class="mx-2">vs</span>
-                                <field name="actual_qty" readonly="state != 'draft'" class="oe_inline"/>
-                                <span class="text-danger fw-bold" invisible="discrepancy_qty == 0">
-                                    ( Dư: <field name="discrepancy_qty" class="oe_inline"/> )
-                                </span>
-                            </div>
+                        <group string="Theo dõi xử lý" name="tracking">
+                            <field name="origin_request_id" string="PR gốc" readonly="1"/>
+                            <field name="source_route_label" readonly="1"/>
+                            <field name="handling_status" readonly="1"/>
+                            <field name="recovery_picking_id" string="Phiếu thu hồi" readonly="1" invisible="not recovery_picking_id"/>
                         </group>
                     </group>
+                    <group string="Chi tiết sai lệch">
+                        <group>
+                            <field name="product_id" options="{'no_open': True}" readonly="1"/>
+                            <field name="expected_qty" string="SL hệ thống" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="actual_qty" string="SL thực tế" readonly="1"/>
+                            <field name="discrepancy_qty" string="SL dư" readonly="1"/>
+                        </group>
+                    </group>
+                    <group invisible="not line_ids">
+                        <field name="line_ids" nolabel="1" readonly="1">
+                            <list create="0" delete="0" edit="0" open_form_view="0">
+                                <field name="lot_id" optional="show"/>
+                                <field name="expected_qty" string="SL hệ thống" sum="Tổng hệ thống"/>
+                                <field name="actual_qty" string="SL thực tế" sum="Tổng thực tế"/>
+                                <field name="discrepancy_qty" string="SL dư" sum="Tổng dư"/>
+                            </list>
+                        </field>
+                    </group>
                     <notebook>
-                        <page string="Thông tin thu hồi" name="recovery">
+                        <page string="Phương án giải quyết" name="recovery">
                             <group>
                                 <group>
-                                    <field name="recovery_picking_id" string="Phiếu điều chuyển thu hồi"/>
                                     <field name="central_stock_adjusted" readonly="1"/>
                                     <field name="source_location_id" readonly="1"/>
                                     <field name="holding_location_id" readonly="1"/>
-                                    <field name="handling_status" readonly="1"/>
                                 </group>
                                 <group>
                                     <field name="notes" placeholder="Nhập ghi chú tại đây..." readonly="state == 'done'"/>

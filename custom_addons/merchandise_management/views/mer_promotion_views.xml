@@ -7,11 +7,11 @@
         <field name="arch" type="xml">
             <list string="Sản phẩm áp dụng" editable="bottom">
                 <field name="product_id" string="Sản phẩm"/>
-                <field name="default_code" string="Mã SKU" readonly="1"/>
                 <field name="lst_price" string="Giá gốc" readonly="1"/>
-                <field name="discount_rate" string="Mức giảm (%)" widget="float"/>
+                <field name="discount_rate" string="Mức giảm (%)" widget="float" required="1"/>
                 <field name="limit_qty"/>
-                <field name="sold_qty" readonly="1"/>
+                <field name="sold_qty" readonly="1" string="Đã bán (Giao)"/>
+                <field name="reserved_qty" readonly="1" string="Đang đặt (Chưa giao)"/>
                 <field name="remaining_qty" readonly="1"/>
                 <field name="qty_in_stores" string="Tồn tại Cửa hàng" readonly="1" decoration-danger="qty_in_stores == 0"/>
             </list>

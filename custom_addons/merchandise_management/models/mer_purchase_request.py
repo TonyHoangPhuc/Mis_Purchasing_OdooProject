@@ -517,33 +517,31 @@ class MerPurchaseRequest(models.Model):
 
     # Gửi lên Quản lý duyệt
     def action_send_to_manager(self):
+        self._validate_budget_selection()
         for request in self:
-            if not request.payment_term_id:
+            is_store_pr = hasattr(request, 'store_id') and request.store_id
+            if not is_store_pr and not getattr(request, 'is_replenishment_from_discrepancy', False) and not request.payment_term_id:
                 raise UserError(_("Vui lòng chọn Điều khoản thanh toán trước khi trình Quản lý!"))
         self.write({'state': 'to_approve'})
 
-    # Phê duyệt yêu cầu
+    # Từ chối yêu cầu
     def action_approve(self):
+        self._validate_budget_selection()
         for request in self:
-            # Kiểm tra ngân sách theo từng ngành hàng trong PR
-            cat_amounts = {}
-            for line in request.line_ids:
-                cat = line.product_id.categ_id
-                cat_amounts[cat] = cat_amounts.get(cat, 0.0) + line.price_subtotal
-            
-            for cat, amount in cat_amounts.items():
-                if not cat:
-                    continue
-                budget = self.env['mer.purchase.budget'].search([
-                    ('category_id', '=', cat.id),
-                    ('state', '=', 'active'),
-                    ('date_from', '<=', fields.Date.today()),
-                    ('date_to', '>=', fields.Date.today()),
-                ], limit=1)
+            for item in request._get_budget_summary():
+                budget = item["budget"]
+                amount = item["amount"]
                 if budget and budget.remaining_amount < amount:
-                    raise UserError(_("Vượt ngân sách ngành hàng '%s'! Ngân sách còn lại: %s, Yêu cầu: %s") % (
-                        cat.name, "{:,.0f}".format(budget.remaining_amount), "{:,.0f}".format(amount)))
-        
+                    category_label = ", ".join(sorted(item["category_names"]))
+                    raise UserError(
+                        _("Vượt ngân sách ngành hàng '%s'! Ngân sách còn lại: %s, Yêu cầu: %s")
+                        % (
+                            category_label,
+                            "{:,.0f}".format(budget.remaining_amount),
+                            "{:,.0f}".format(amount),
+                        )
+                    )
+
         self.write({'state': 'approved', 'manager_id': self.env.user.id})
 
     # Từ chối yêu cầu

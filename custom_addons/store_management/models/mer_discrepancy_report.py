@@ -1,9 +1,79 @@
-from odoo import _, fields, models
+import re
+
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 
 class MerDiscrepancyReport(models.Model):
     _inherit = "mer.discrepancy.report"
+
+    @staticmethod
+    def _extract_request_names_from_text(*texts):
+        request_names = set()
+        for text in texts:
+            if not text:
+                continue
+            request_names.update(re.findall(r"PR/\d+", text))
+        return list(request_names)
+
+    def _get_related_origin_requests(self):
+        request_lines = self.env["mer.purchase.request.line"]
+        related_requests = self.env["mer.purchase.request"]
+        request_model = self.env["mer.purchase.request"]
+
+        for report in self.filtered(lambda current: current.picking_id and current.product_id):
+            related_requests |= report.mer_request_id
+
+            request_names = self._extract_request_names_from_text(
+                report.picking_id.origin,
+                report.picking_id.purchase_id.origin if report.picking_id.purchase_id else False,
+            )
+            if request_names:
+                related_requests |= request_model.search([("name", "in", request_names)])
+
+            related_requests |= request_lines.search(
+                [
+                    ("store_receipt_picking_id", "=", report.picking_id.id),
+                    ("product_id", "=", report.product_id.id),
+                ]
+            ).mapped("request_id")
+
+            if report.picking_id.purchase_id:
+                related_requests |= request_lines.search(
+                    [
+                        ("purchase_order_id", "=", report.picking_id.purchase_id.id),
+                        ("product_id", "=", report.product_id.id),
+                        ("fulfillment_method", "=", "supplier_central"),
+                    ]
+                ).mapped("request_id")
+
+        return related_requests
+
+    def _auto_init(self):
+        res = super()._auto_init()
+        self.env.cr.execute(
+            """
+            UPDATE mer_discrepancy_report report
+               SET state = 'done'
+             WHERE report.reason = 'damaged'
+               AND report.replenishment_request_id IS NOT NULL
+               AND report.state = 'draft'
+            """
+        )
+        self.env.cr.execute(
+            """
+            UPDATE mer_purchase_request_line line
+               SET internal_flow_state = 'rejected'
+              FROM mer_discrepancy_report report
+             WHERE report.reason = 'damaged'
+               AND report.replenishment_request_id IS NOT NULL
+               AND report.state != 'cancel'
+               AND report.picking_id = line.store_receipt_picking_id
+               AND report.product_id = line.product_id
+               AND line.internal_flow_state = 'waiting_store_receipt'
+            """
+        )
+        return res
 
     picking_id = fields.Many2one(
         "stock.picking",
@@ -12,7 +82,7 @@ class MerDiscrepancyReport(models.Model):
     )
     mer_request_id = fields.Many2one(
         "mer.purchase.request",
-        string="Yeu cau Merchandise",
+        string="Yêu cầu PR",
         related="picking_id.mer_request_id",
         store=True,
         readonly=True,
@@ -42,6 +112,12 @@ class MerDiscrepancyReport(models.Model):
         store=True,
         readonly=True,
     )
+    display_destination_name = fields.Char(
+        string="Điểm nhận",
+        compute="_compute_display_destination_name",
+        store=True,
+        readonly=True,
+    )
     handling_status = fields.Char(
         string="Tình trạng xử lý",
         compute="_compute_handling_status",
@@ -52,6 +128,63 @@ class MerDiscrepancyReport(models.Model):
         ondelete={"damaged": "cascade"},
     )
 
+    @api.depends(
+        "source_route_type",
+        "warehouse_id",
+        "picking_id",
+        "picking_id.origin",
+        "picking_id.purchase_id",
+        "picking_id.purchase_id.origin",
+        "mer_request_id",
+        "mer_request_id.store_id",
+        "replenishment_request_id",
+        "replenishment_request_id.store_id",
+    )
+    def _compute_display_destination_name(self):
+        for report in self:
+            related_requests = report._get_related_origin_requests()
+            origin_store = (
+                report.mer_request_id.store_id
+                if report.mer_request_id and report.mer_request_id.store_id
+                else (
+                    related_requests.filtered("store_id")[:1].store_id
+                    or report.replenishment_request_id.store_id
+                )
+            )
+            if origin_store:
+                report.display_destination_name = origin_store.display_name
+            elif report.source_route_type == "supplier_to_central":
+                report.display_destination_name = _("Kho tổng")
+            else:
+                report.display_destination_name = report.warehouse_id.display_name if report.warehouse_id else False
+
+    def _mark_origin_request_lines_resolved(self):
+        request_lines = self.env["mer.purchase.request.line"]
+        related_requests = self._get_related_origin_requests()
+        for report in self.filtered(
+            lambda current: current.reason == "damaged"
+            and current.replenishment_request_id
+            and current.picking_id
+            and current.product_id
+        ):
+            request_lines |= self.env["mer.purchase.request.line"].search(
+                [
+                    ("store_receipt_picking_id", "=", report.picking_id.id),
+                    ("product_id", "=", report.product_id.id),
+                ]
+            )
+
+        if request_lines:
+            request_lines.filtered(
+                lambda line: line.internal_flow_state == "waiting_store_receipt"
+            ).write({"internal_flow_state": "rejected"})
+            related_requests |= request_lines.mapped("request_id")
+
+        if related_requests:
+            related_requests._sync_state_with_logistics()
+            related_requests._compute_internal_flow_metrics()
+            related_requests.mapped("line_ids")._compute_route_status_display()
+
     def _compute_handling_status(self):
         for report in self:
             if report.state == "done":
@@ -61,16 +194,20 @@ class MerDiscrepancyReport(models.Model):
                 if report.replenishment_request_id:
                     report.handling_status = _("Đã tạo PR bù")
                 elif report.submitted_to_merchandise:
-                    report.handling_status = _("Chờ Mer tạo PR bù")
+                    report.handling_status = _("Chờ Merchandise tạo đơn PR bù hàng")
                 else:
-                    report.handling_status = _("Chờ gửi Mer")
-            elif report.reason == "damaged":
+                    report.handling_status = _("Chờ Cửa hàng gửi Merchandise")
+            elif report.state == "done":
+                report.handling_status = _("Đã xử lý")
+            elif report.reason == "overage":
                 if report.return_picking_id and report.return_picking_id.state == "done":
-                    report.handling_status = _("Kho tổng đã nhận hàng lỗi")
+                    report.handling_status = _("Đã xử lý xong")
                 elif report.return_picking_id:
-                    report.handling_status = _("Chờ Kho tổng nhận hàng lỗi")
+                    report.handling_status = _("Chờ thu hồi hàng dư")
+                elif report.submitted_to_merchandise:
+                    report.handling_status = _("Chờ Merchandise xử lý")
                 else:
-                    report.handling_status = _("Chờ xử lý hàng lỗi")
+                    report.handling_status = _("Chờ Cửa hàng gửi Mer")
             else:
                 report.handling_status = _("Đang xử lý")
 
@@ -109,12 +246,30 @@ class MerDiscrepancyReport(models.Model):
                 if po:
                     self.purchase_id = po[0]
 
-        self.write({"submitted_to_merchandise": True})
+        self.write({"submitted_to_merchandise": True, "state": "reported"})
+        related_requests = self._get_related_origin_requests()
+        if related_requests:
+            related_requests._sync_state_with_logistics()
+            related_requests._compute_internal_flow_metrics()
+            related_requests.mapped("line_ids")._compute_route_status_display()
         self.message_post(
             body=_("Cửa hàng đã gửi báo cáo sai lệch cho bộ phận Merchandise."),
             subtype_xmlid="mail.mt_note",
         )
-        return True
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Đã gửi Merchandise"),
+                "message": _(
+                    "Báo cáo %(report)s đã được gửi Merchandise. Bộ phận Merchandise có thể tạo PR bù hàng khi cần."
+                )
+                % {"report": self.name},
+                "sticky": False,
+                "type": "success",
+                "next": {"type": "ir.actions.client", "tag": "reload"},
+            },
+        }
 
     def action_create_replenishment_po(self):
         store_shortage_reports = self.filtered(
@@ -153,8 +308,18 @@ class MerDiscrepancyReport(models.Model):
         if qty_to_order <= 0:
             raise UserError(_("Số lượng cần bù phải lớn hơn 0."))
 
-        store = self.picking_id.store_receiving_store_id or self.picking_id.location_dest_id.warehouse_id.store_record_id
-        warehouse = self.warehouse_id or (store.warehouse_id if store else False)
+        related_requests = self._get_related_origin_requests()
+        origin_request = self.mer_request_id or related_requests.filtered("store_id")[:1]
+        store = (
+            origin_request.store_id
+            or self.picking_id.store_receiving_store_id
+            or self.picking_id.location_dest_id.warehouse_id.store_record_id
+        )
+        warehouse = (
+            origin_request.warehouse_id
+            or self.warehouse_id
+            or (store.warehouse_id if store else False)
+        )
         if not warehouse:
             raise UserError(_("Không xác định được kho cửa hàng để tạo PR bù hàng."))
 

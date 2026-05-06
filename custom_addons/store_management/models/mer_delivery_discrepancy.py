@@ -26,6 +26,12 @@ class MerExcessReceipt(models.Model):
         required=True,
         domain="[('picking_type_code', 'in', ('incoming', 'internal'))]",
     )
+    origin_request_id = fields.Many2one(
+        "mer.purchase.request",
+        string="PR gốc",
+        compute="_compute_origin_request_id",
+        readonly=True,
+    )
     store_id = fields.Many2one(
         "store.store",
         string="Cửa hàng",
@@ -33,8 +39,25 @@ class MerExcessReceipt(models.Model):
         store=True,
         readonly=True,
     )
+    display_store_name = fields.Char(
+        string="Cửa hàng hiển thị",
+        compute="_compute_display_store_name",
+        readonly=True,
+    )
     product_id = fields.Many2one(
         "product.product", string="Sản phẩm", required=True
+    )
+    line_ids = fields.One2many(
+        "mer.excess.receipt.line",
+        "report_id",
+        string="Chi tiết theo lô",
+        copy=True,
+    )
+    lot_id = fields.Many2one(
+        "stock.lot",
+        string="Lô hàng",
+        readonly=True,
+        copy=False,
     )
     expected_qty = fields.Float(string="SL Hệ thống")
     actual_qty = fields.Float(string="SL Thực tế", required=True)
@@ -99,11 +122,51 @@ class MerExcessReceipt(models.Model):
         string="Tình trạng xử lý",
         compute="_compute_handling_status",
     )
+    status_badge = fields.Selection(
+        [
+            ("new", "Mới"),
+            ("done", "Hoàn tất"),
+            ("cancel", "Đã hủy"),
+        ],
+        string="Trạng thái hiển thị",
+        compute="_compute_status_badge",
+    )
 
-    @api.depends("expected_qty", "actual_qty")
+    @api.depends(
+        "expected_qty",
+        "actual_qty",
+        "line_ids.expected_qty",
+        "line_ids.actual_qty",
+        "line_ids.discrepancy_qty",
+    )
     def _compute_discrepancy_qty(self):
         for rec in self:
-            rec.discrepancy_qty = max(0.0, rec.actual_qty - rec.expected_qty)
+            if rec.line_ids:
+                rec.discrepancy_qty = sum(rec.line_ids.mapped("discrepancy_qty"))
+            else:
+                rec.discrepancy_qty = max(0.0, rec.actual_qty - rec.expected_qty)
+
+    @api.depends("picking_id", "picking_id.origin")
+    def _compute_origin_request_id(self):
+        request_model = self.env["mer.purchase.request"]
+        for rec in self:
+            request = rec.picking_id.mer_request_id if hasattr(rec.picking_id, "mer_request_id") else False
+            if not request and rec.picking_id.origin:
+                request = request_model.search([("name", "=", rec.picking_id.origin.split(" - ")[0])], limit=1)
+            rec.origin_request_id = request
+
+    @api.depends("picking_id", "picking_id.origin", "store_id", "source_route_type")
+    def _compute_display_store_name(self):
+        for rec in self:
+            origin_request = rec.origin_request_id
+            if origin_request.store_id:
+                rec.display_store_name = origin_request.store_id.display_name
+            elif rec.store_id:
+                rec.display_store_name = rec.store_id.display_name
+            elif rec.source_route_type == "supplier_to_central":
+                rec.display_store_name = _("Kho tổng")
+            else:
+                rec.display_store_name = False
 
     @api.depends("state", "central_stock_adjusted", "recovery_picking_id.state")
     def _compute_handling_status(self):
@@ -113,13 +176,23 @@ class MerExcessReceipt(models.Model):
             elif rec.state == "done":
                 rec.handling_status = _("Đã thu hồi")
             elif rec.recovery_picking_id:
-                rec.handling_status = _("Đang thu hồi")
-            elif rec.central_stock_adjusted:
-                rec.handling_status = _("Chờ Kho tổng thu hồi")
+                rec.handling_status = _("Đã gửi Kho tổng")
+            elif rec.state == "approved" or rec.central_stock_adjusted:
+                rec.handling_status = _("Chờ Merchandise gửi Kho tổng")
             elif rec.state == "reported":
-                rec.handling_status = _("Chờ Merchandise duyệt")
+                rec.handling_status = _("Chờ Merchandise phê duyệt")
             else:
-                rec.handling_status = _("Chờ gửi")
+                rec.handling_status = _("Chờ Cửa hàng gửi Merchandise")
+
+    @api.depends("state")
+    def _compute_status_badge(self):
+        for rec in self:
+            if rec.state == "cancel":
+                rec.status_badge = "cancel"
+            elif rec.state == "done":
+                rec.status_badge = "done"
+            else:
+                rec.status_badge = "new"
 
     def _is_central_to_store_excess(self):
         self.ensure_one()
@@ -168,6 +241,160 @@ class MerExcessReceipt(models.Model):
                 self.expected_qty = sum(move.mapped("product_uom_qty"))
             else:
                 self.expected_qty = 0.0
+            self.lot_id = self._get_single_source_lot()
+            if not self.line_ids:
+                self.line_ids = [(5, 0, 0)] + [
+                    (0, 0, line_vals)
+                    for line_vals in self._prepare_default_line_values(
+                        actual_qty=self.actual_qty or None,
+                        expected_qty=self.expected_qty or None,
+                    )
+                ]
+            self._apply_line_totals()
+
+    @api.onchange(
+        "line_ids",
+        "line_ids.expected_qty",
+        "line_ids.actual_qty",
+        "line_ids.lot_id",
+    )
+    def _onchange_line_ids(self):
+        self._apply_line_totals()
+
+    def _get_single_source_lot(self):
+        self.ensure_one()
+        if self.line_ids:
+            lots = self.line_ids.mapped("lot_id")
+            distinct_lots = lots.filtered(bool)
+            return distinct_lots[0] if len(distinct_lots) == 1 and len(self.line_ids) == 1 else False
+        if not self.picking_id or not self.product_id:
+            return False
+        lots = self.picking_id.move_line_ids.filtered(
+            lambda line: line.product_id == self.product_id and line.lot_id and line.quantity > 0
+        ).mapped("lot_id")
+        return lots[0] if len(lots) == 1 else False
+
+    def _get_source_lot_breakdown(self):
+        self.ensure_one()
+        if not self.picking_id or not self.product_id:
+            return []
+
+        product_moves = self.picking_id.move_ids.filtered(
+            lambda current_move: current_move.product_id == self.product_id
+        )
+        if not product_moves:
+            return []
+
+        breakdown = []
+        for move in product_moves:
+            move_expected_qty = move._get_wm_expected_qty()
+            lot_lines = self.picking_id.move_line_ids.filtered(
+                lambda line: line.move_id == move and line.lot_id
+            ).sorted("id")
+            if not lot_lines:
+                breakdown.append(
+                    {
+                        "lot_id": False,
+                        "expected_qty": move_expected_qty,
+                    }
+                )
+                continue
+
+            remaining_expected = move_expected_qty
+            last_index = len(lot_lines) - 1
+            for index, move_line in enumerate(lot_lines):
+                if index == last_index:
+                    expected_qty = max(remaining_expected, 0.0)
+                else:
+                    expected_qty = min(move_line.quantity, max(remaining_expected, 0.0))
+                breakdown.append(
+                    {
+                        "lot_id": move_line.lot_id.id,
+                        "expected_qty": expected_qty,
+                    }
+                )
+                remaining_expected -= expected_qty
+        return breakdown
+
+    def _prepare_default_line_values(self, actual_qty=None, expected_qty=None):
+        self.ensure_one()
+        breakdown = self._get_source_lot_breakdown()
+        if not breakdown:
+            return []
+
+        total_expected = expected_qty if expected_qty is not None else sum(
+            item["expected_qty"] for item in breakdown
+        )
+        total_actual = actual_qty if actual_qty is not None else (
+            self.actual_qty or total_expected
+        )
+
+        remaining_actual = max(total_actual, 0.0)
+        line_values = []
+        last_index = len(breakdown) - 1
+        for index, item in enumerate(breakdown):
+            line_expected = item["expected_qty"]
+            if index == last_index:
+                line_actual = max(remaining_actual, 0.0)
+            else:
+                line_actual = min(line_expected, max(remaining_actual, 0.0))
+            line_values.append(
+                {
+                    "lot_id": item["lot_id"],
+                    "expected_qty": line_expected,
+                    "actual_qty": line_actual,
+                }
+            )
+            remaining_actual -= line_actual
+        return line_values
+
+    def _apply_line_totals(self):
+        for rec in self:
+            if not rec.line_ids:
+                continue
+            rec.expected_qty = sum(rec.line_ids.mapped("expected_qty"))
+            rec.actual_qty = sum(rec.line_ids.mapped("actual_qty"))
+            distinct_lots = rec.line_ids.mapped("lot_id").filtered(bool)
+            rec.lot_id = distinct_lots[0] if len(distinct_lots) == 1 and len(rec.line_ids) == 1 else False
+
+    def _sync_stored_totals_from_lines(self):
+        for rec in self.filtered("line_ids"):
+            values = {
+                "expected_qty": sum(rec.line_ids.mapped("expected_qty")),
+                "actual_qty": sum(rec.line_ids.mapped("actual_qty")),
+            }
+            distinct_lots = rec.line_ids.mapped("lot_id").filtered(bool)
+            values["lot_id"] = (
+                distinct_lots[0].id
+                if len(distinct_lots) == 1 and len(rec.line_ids) == 1
+                else False
+            )
+            if (
+                rec.expected_qty != values["expected_qty"]
+                or rec.actual_qty != values["actual_qty"]
+                or rec.lot_id.id != values["lot_id"]
+            ):
+                rec.with_context(skip_excess_line_sync=True).write(values)
+
+    def _get_discrepancy_breakdown(self):
+        self.ensure_one()
+        if self.line_ids:
+            breakdown = {}
+            for line in self.line_ids.filtered(lambda current_line: current_line.discrepancy_qty > 0):
+                key = line.lot_id.id or 0
+                breakdown.setdefault(
+                    key,
+                    {
+                        "lot": line.lot_id,
+                        "qty": 0.0,
+                    },
+                )
+                breakdown[key]["qty"] += line.discrepancy_qty
+            if breakdown:
+                return list(breakdown.values())
+
+        lot = self.lot_id or self._get_single_source_lot()
+        return [{"lot": lot, "qty": self.discrepancy_qty}] if self.discrepancy_qty > 0 else []
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -177,14 +404,52 @@ class MerExcessReceipt(models.Model):
                     self.env["ir.sequence"].next_by_code("mer.excess.receipt")
                     or _("Mới")
                 )
-        return super().create(vals_list)
+            if vals.get("picking_id") and vals.get("product_id"):
+                report = self.new(vals)
+                if not vals.get("line_ids"):
+                    default_line_values = report._prepare_default_line_values(
+                        actual_qty=vals.get("actual_qty"),
+                        expected_qty=vals.get("expected_qty"),
+                    )
+                    if default_line_values:
+                        vals["line_ids"] = [(0, 0, line_vals) for line_vals in default_line_values]
+                if not vals.get("lot_id"):
+                    lot = report._get_single_source_lot()
+                    if lot:
+                        vals["lot_id"] = lot.id
+        records = super().create(vals_list)
+        records._sync_stored_totals_from_lines()
+        return records
+
+    def write(self, vals):
+        res = super().write(vals)
+        if self.env.context.get("skip_excess_line_sync"):
+            return res
+        if any(key in vals for key in ("line_ids", "picking_id", "product_id")):
+            for rec in self:
+                if not rec.line_ids and rec.picking_id and rec.product_id:
+                    default_line_values = rec._prepare_default_line_values()
+                    if default_line_values:
+                        rec.with_context(skip_excess_line_sync=True).write(
+                            {
+                                "line_ids": [(5, 0, 0)]
+                                + [(0, 0, line_vals) for line_vals in default_line_values]
+                            }
+                        )
+        if any(key in vals for key in ("line_ids", "picking_id", "product_id", "expected_qty", "actual_qty")):
+            self._sync_stored_totals_from_lines()
+        return res
 
     def action_submit(self):
         self.ensure_one()
+        if self.line_ids:
+            self._sync_stored_totals_from_lines()
+        # if self.product_id.tracking != "none" and self.line_ids.filtered(
+        #     lambda line: line.actual_qty > 0 and not line.lot_id
+        # ):
+        #     raise UserError(_("Sản phẩm theo lô cần khai báo đầy đủ lot cho từng dòng nhận dư trước khi gửi Merchandise."))
         if self.discrepancy_qty <= 0:
             raise UserError(_("Không có số lượng dư để báo cáo."))
-        if self._is_central_to_store_excess():
-            self._action_warehouse_adjust_logic()
         self.state = "reported"
         self.message_post(body=_("Đã gửi báo cáo nhận dư hàng đến đội Merchandise."))
 
@@ -213,13 +478,17 @@ class MerExcessReceipt(models.Model):
             if not source_location or not excess_location:
                 raise UserError(_("Không xác định được vị trí nguồn hoặc vị trí chờ thu hồi cho hàng dư."))
 
-            if rec._is_central_to_store_excess() or rec.picking_id.picking_type_code == "internal":
+            discrepancy_breakdown = rec._get_discrepancy_breakdown()
+            for item in discrepancy_breakdown:
+                lot = item["lot"]
+                qty = item["qty"]
+                if rec._is_central_to_store_excess() or rec.picking_id.picking_type_code == "internal":
+                    self.env["stock.quant"].sudo()._update_available_quantity(
+                        rec.product_id, source_location, -qty, lot_id=lot
+                    )
                 self.env["stock.quant"].sudo()._update_available_quantity(
-                    rec.product_id, source_location, -rec.discrepancy_qty
+                    rec.product_id, excess_location, qty, lot_id=lot
                 )
-            self.env["stock.quant"].sudo()._update_available_quantity(
-                rec.product_id, excess_location, rec.discrepancy_qty
-            )
             rec.write(
                 {
                     "source_location_id": source_location.id,
@@ -231,6 +500,8 @@ class MerExcessReceipt(models.Model):
     def action_create_recovery_picking(self):
         """Tạo phiếu thu hồi hàng từ địa điểm 'Chờ trả' của Cửa hàng về Kho tổng."""
         self.ensure_one()
+        if self.state != "approved":
+            raise UserError(_("Merchandise cần phê duyệt báo cáo nhận dư trước khi tạo đơn thu hồi."))
         if self.recovery_picking_id:
             raise UserError(_("Phiếu thu hồi đã được tạo."))
 
@@ -247,6 +518,7 @@ class MerExcessReceipt(models.Model):
         destination_location = self._get_central_source_location()
         if not destination_location:
             raise UserError(_("Không xác định được vị trí Kho tổng nhận hàng thu hồi."))
+        discrepancy_breakdown = self._get_discrepancy_breakdown()
         picking_vals = {
             "picking_type_id": picking_type.id,
             "location_id": excess_location.id,
@@ -265,6 +537,21 @@ class MerExcessReceipt(models.Model):
         }
         picking = self.env["stock.picking"].create(picking_vals)
         picking.action_confirm()
+
+        move = picking.move_ids[:1]
+        if discrepancy_breakdown and move:
+            picking.move_line_ids.unlink()
+            for item in discrepancy_breakdown:
+                move_line_vals = move._prepare_move_line_vals(quantity=item["qty"])
+                move_line_vals.update(
+                    {
+                        "lot_id": item["lot"].id if item["lot"] else False,
+                        "quantity": item["qty"],
+                        "location_id": excess_location.id,
+                        "location_dest_id": destination_location.id,
+                    }
+                )
+                self.env["stock.move.line"].create(move_line_vals)
 
         self.recovery_picking_id = picking.id
         self.state = "returning"
@@ -298,3 +585,40 @@ class MerExcessReceipt(models.Model):
                 raise UserError(_("Phiếu thu hồi %s chưa được Validate hoàn tất. Vui lòng click vào mã phiếu để xử lý thủ công.") % self.recovery_picking_id.name)
         
         self.state = "done"
+
+
+class MerExcessReceiptLine(models.Model):
+    _name = "mer.excess.receipt.line"
+    _description = "Chi tiết nhận dư theo lô"
+    _order = "id"
+
+    report_id = fields.Many2one(
+        "mer.excess.receipt",
+        string="Báo cáo",
+        required=True,
+        ondelete="cascade",
+    )
+    product_id = fields.Many2one(
+        related="report_id.product_id",
+        store=True,
+        readonly=True,
+    )
+    lot_id = fields.Many2one(
+        "stock.lot",
+        string="Lô hàng",
+        domain="[('product_id', '=', product_id)]",
+        readonly=True,
+    )
+    expected_qty = fields.Float(string="SL Hệ thống", required=True, readonly=True)
+    actual_qty = fields.Float(string="SL Thực tế", required=True, readonly=True)
+    discrepancy_qty = fields.Float(
+        string="SL Dư",
+        compute="_compute_discrepancy_qty",
+        store=True,
+        readonly=True,
+    )
+
+    @api.depends("expected_qty", "actual_qty")
+    def _compute_discrepancy_qty(self):
+        for rec in self:
+            rec.discrepancy_qty = max(0.0, rec.actual_qty - rec.expected_qty)

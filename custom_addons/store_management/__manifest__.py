@@ -8,6 +8,7 @@
     "depends": [
         "mail",
         "product",
+        "product_expiry",
         "stock",
         "sale_stock",
         "merchandise_management",
@@ -16,6 +17,7 @@
     ],
     "data": [
         "data/mer_excess_receipt_data.xml",
+        "data/stock_lot_sequence_data.xml",
         "security/store_security.xml",
         "security/ir.model.access.csv",
         "security/ir_rule.xml",
@@ -27,6 +29,8 @@
         "views/store_menu_views.xml",
         "views/mer_delivery_discrepancy_views.xml",
         "views/mer_delivery_discrepancy_wizard_views.xml",
+        "views/stock_move_line_expiry_views.xml",
+        "views/stock_quant_views.xml",
         "views/warehouse_management_integration_views.xml",
         "views/mer_stock_monitoring_views.xml",
         "views/mer_sales_analysis_views.xml",

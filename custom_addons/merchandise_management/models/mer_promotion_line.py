@@ -13,14 +13,65 @@ class MerPromotionLine(models.Model):
     default_code = fields.Char(related='product_id.default_code', string='SKU')
     lst_price = fields.Float(related='product_id.lst_price', string='List Price')
     limit_qty = fields.Float(string='SL KM Tối đa', default=0.0, help='Giới hạn số lượng được bán với giá KM (Để 0 là không giới hạn)')
-    sold_qty = fields.Float(string='Đã bán', default=0.0, copy=False)
+    sold_qty = fields.Float(string='Đã bán', compute='_compute_sold_qty', copy=False)
+    reserved_qty = fields.Float(string='Giữ chỗ', compute='_compute_reserved_qty')
     remaining_qty = fields.Float(string='Còn lại', compute='_compute_remaining_qty')
+
+    @api.depends('product_id')
+    def _compute_sold_qty(self):
+        for line in self:
+            line.sold_qty = 0.0
+            real_id = line._origin.id if hasattr(line, '_origin') and line._origin.id else (line.id if line.id and not isinstance(line.id, models.NewId) else False)
+            if real_id:
+                lines = self.env['sale.order.line'].sudo().search([
+                    ('promotion_line_id', '=', real_id),
+                    ('state', 'in', ['sale', 'done'])
+                ])
+                
+                import logging
+                _logger = logging.getLogger(__name__)
+                _logger.error("!!! COMPUTE SOLD QTY FOR KM %s | SO Lines: %s", real_id, lines.ids)
+                
+                # 1. Đã bán: Chỉ tính khi hàng THỰC SỰ RỜI KHO CỬA HÀNG (Internal -> Customer)
+                done_moves = lines.mapped('move_ids').filtered(
+                    lambda m: m.state == 'done' and 
+                              m.location_id.usage == 'internal' and
+                              m.location_dest_id.usage == 'customer'
+                )
+                
+                for m in done_moves:
+                    _logger.error("   -> FOUND DONE MOVE: %s | SO: %s | Qty: %s", m.id, m.sale_line_id.order_id.name, m.quantity)
+                
+                line.sold_qty = sum(done_moves.mapped('quantity'))
+                
+                # Nếu không có move (ví dụ sản phẩm dịch vụ), dùng qty_delivered trực tiếp từ SO Line
+                if not lines.mapped('move_ids'):
+                    _logger.error("   -> NO MOVES FOUND, USING QTY_DELIVERED")
+                    line.sold_qty = sum(lines.mapped('qty_delivered'))
+
+    @api.depends('product_id')
+    def _compute_reserved_qty(self):
+        for line in self:
+            line.reserved_qty = 0.0
+            real_id = line._origin.id if hasattr(line, '_origin') and line._origin.id else (line.id if line.id and not isinstance(line.id, models.NewId) else False)
+            if real_id:
+                lines = self.env['sale.order.line'].sudo().search([
+                    ('promotion_line_id', '=', real_id),
+                    ('state', 'in', ['sale', 'done'])
+                ])
+                total_delivered = sum(lines.mapped('move_ids').filtered(lambda m: m.state == 'done').mapped('quantity'))
+                total_ordered = sum(lines.mapped('product_uom_qty'))
+                line.reserved_qty = max(0.0, total_ordered - total_delivered)
 
     @api.depends('limit_qty', 'sold_qty')
     def _compute_remaining_qty(self):
         for line in self:
             if line.limit_qty > 0:
                 line.remaining_qty = max(0.0, line.limit_qty - line.sold_qty)
+                if line.remaining_qty <= 0:
+                    line.env['mer.promotion']._update_product_prices(products=line.product_id)
+                    if line.promotion_id.state == 'active' and line.promotion_id._all_limited_lines_exhausted():
+                        line.promotion_id.action_expire()
             else:
                 line.remaining_qty = 0.0
 
@@ -41,11 +92,3 @@ class MerPromotionLine(models.Model):
                 ('quantity', '>', 0),
             ])
             line.qty_in_stores = sum(quants.mapped('quantity'))
-
-    @api.constrains('limit_qty')
-    def _check_limit_qty(self):
-        for line in self:
-            if line.limit_qty > 0 and round(line.limit_qty, 2) > round(line.qty_in_stores, 2):
-                raise ValidationError(_("Số lượng KM tối đa (%s) của sản phẩm '%s' không được lớn hơn tổng số lượng tồn kho hiện có (%s)!") % (
-                    line.limit_qty, line.product_id.name, line.qty_in_stores
-                ))

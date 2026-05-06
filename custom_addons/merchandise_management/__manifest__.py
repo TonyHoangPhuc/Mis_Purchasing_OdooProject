@@ -19,6 +19,7 @@
     'data': [
         'security/groups.xml',
         'security/ir.model.access.csv',
+        'security/ir_rule.xml',
         'data/ir_sequence_data.xml',
         'data/ir_cron_data.xml',
         'views/merchandise_menus_root.xml',

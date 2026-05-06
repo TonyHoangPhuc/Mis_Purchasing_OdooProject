@@ -27,26 +27,67 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             return res
 
         picking = self.env["stock.picking"].browse(picking_id)
-        product_data = {}
-        for move in picking.move_ids.filtered(lambda current_move: current_move.state != "cancel"):
-            product_data.setdefault(
-                move.product_id.id,
-                {
-                    "product_id": move.product_id.id,
-                    "expected_qty": 0.0,
-                    "actual_qty": 0.0,
-                    "damaged_qty": 0.0,
-                    "damage_note": "",
-                },
+        product_data = []
+        for product in picking.move_ids.filtered(
+            lambda current_move: current_move.state != "cancel"
+        ).mapped("product_id"):
+            product_moves = picking.move_ids.filtered(
+                lambda current_move: current_move.state != "cancel"
+                and current_move.product_id == product
             )
-            product_data[move.product_id.id]["expected_qty"] += move.product_uom_qty
-            default_actual_qty = move.quantity
-            if not picking.store_actual_check_done and not default_actual_qty:
-                default_actual_qty = move.product_uom_qty
-            product_data[move.product_id.id]["actual_qty"] += default_actual_qty
-            product_data[move.product_id.id]["damaged_qty"] += move.wm_damaged_qty
-            if move.wm_damage_note:
-                product_data[move.product_id.id]["damage_note"] = move.wm_damage_note
+            product_move_lines = picking.move_line_ids.filtered(
+                lambda line: line.move_id.state != "cancel"
+                and line.product_id == product
+                and line.lot_id
+            )
+
+            if product.tracking != "none" and product_move_lines:
+                lot_data = {}
+                for move_line in product_move_lines:
+                    lot_data.setdefault(
+                        move_line.lot_id.id,
+                        {
+                            "product_id": product.id,
+                            "lot_id": move_line.lot_id.id,
+                            "expected_qty": 0.0,
+                            "actual_qty": 0.0,
+                            "damaged_qty": 0.0,
+                            "damage_note": "",
+                        },
+                    )
+                    lot_data[move_line.lot_id.id]["expected_qty"] += move_line.quantity
+                    default_actual_qty = move_line.quantity
+                    if not picking.store_actual_check_done and not default_actual_qty:
+                        default_actual_qty = move_line.quantity
+                    lot_data[move_line.lot_id.id]["actual_qty"] += default_actual_qty
+
+                total_damaged_qty = sum(product_moves.mapped("wm_damaged_qty"))
+                damage_notes = [note for note in product_moves.mapped("wm_damage_note") if note]
+                lot_rows = list(lot_data.values())
+                if lot_rows and total_damaged_qty > 0:
+                    lot_rows[-1]["damaged_qty"] = total_damaged_qty
+                    lot_rows[-1]["damage_note"] = "; ".join(dict.fromkeys(damage_notes))
+                product_data.extend(lot_rows)
+                continue
+
+            expected_qty = sum(product_moves.mapped("product_uom_qty"))
+            actual_qty = sum(product_moves.mapped("quantity"))
+            if not picking.store_actual_check_done and not actual_qty:
+                actual_qty = expected_qty
+            product_data.append(
+                {
+                    "product_id": product.id,
+                    "lot_id": False,
+                    "expected_qty": expected_qty,
+                    "actual_qty": actual_qty,
+                    "damaged_qty": sum(product_moves.mapped("wm_damaged_qty")),
+                    "damage_note": "; ".join(
+                        dict.fromkeys(
+                            [note for note in product_moves.mapped("wm_damage_note") if note]
+                        )
+                    ),
+                }
+            )
 
         res.update(
             {
@@ -57,13 +98,14 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
                         0,
                         {
                             "product_id": values["product_id"],
+                            "lot_id": values["lot_id"],
                             "expected_qty": values["expected_qty"],
                             "actual_qty": values["actual_qty"],
                             "damaged_qty": values["damaged_qty"],
                             "damage_note": values["damage_note"],
                         },
                     )
-                    for values in product_data.values()
+                    for values in product_data
                 ],
             }
         )
@@ -90,11 +132,59 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             remaining_qty -= move_qty
             remaining_damaged_qty -= move_damaged_qty
 
-    def _create_or_update_shortage_report(self, line, actual_qty, destination_warehouse):
+    def _write_actual_qty_to_move_lines(self, wizard_lines):
+        self.ensure_one()
+        tracked_lines = wizard_lines.filtered("lot_id")
+        if not tracked_lines:
+            return
+
+        product = tracked_lines[0].product_id
+        product_moves = self.picking_id.move_ids.filtered(
+            lambda move: move.product_id == product and move.state != "cancel"
+        )
+        if not product_moves:
+            return
+
+        product_move_lines = self.picking_id.move_line_ids.filtered(
+            lambda line: line.product_id == product and line.move_id.state != "cancel"
+        )
+        if product_move_lines:
+            product_move_lines.unlink()
+
+        move_capacities = [
+            {
+                "move": move,
+                "remaining_qty": move.quantity,
+            }
+            for move in product_moves
+            if move.quantity > 0
+        ]
+
+        for wizard_line in tracked_lines.filtered(lambda line: line.actual_qty > 0):
+            remaining_qty = wizard_line.actual_qty
+            while remaining_qty > 0 and move_capacities:
+                current_slot = move_capacities[0]
+                move = current_slot["move"]
+                allocated_qty = min(remaining_qty, current_slot["remaining_qty"])
+                move_line_vals = move._prepare_move_line_vals(quantity=allocated_qty)
+                move_line_vals.update(
+                    {
+                        "lot_id": wizard_line.lot_id.id,
+                        "quantity": allocated_qty,
+                    }
+                )
+                self.env["stock.move.line"].create(move_line_vals)
+
+                remaining_qty -= allocated_qty
+                current_slot["remaining_qty"] -= allocated_qty
+                if current_slot["remaining_qty"] <= 0:
+                    move_capacities.pop(0)
+
+    def _create_or_update_shortage_report(self, product, expected_qty, actual_qty, destination_warehouse):
         report = self.env["mer.discrepancy.report"].search(
             [
                 ("picking_id", "=", self.picking_id.id),
-                ("product_id", "=", line.product_id.id),
+                ("product_id", "=", product.id),
                 ("reason", "=", "shortage"),
             ],
             limit=1,
@@ -103,8 +193,8 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             "picking_id": self.picking_id.id,
             "purchase_id": self.picking_id.purchase_id.id,
             "warehouse_id": destination_warehouse.id if destination_warehouse else False,
-            "product_id": line.product_id.id,
-            "expected_qty": line.expected_qty,
+            "product_id": product.id,
+            "expected_qty": expected_qty,
             "actual_qty": actual_qty,
             "reason": "shortage",
             "solution_notes": _("Được tạo tự động từ bước kiểm hàng thực tế tại cửa hàng."),
@@ -114,11 +204,13 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             return report
         return self.env["mer.discrepancy.report"].create(vals)
 
-    def _create_or_update_damaged_report(self, line, destination_warehouse):
+    def _create_or_update_damaged_report(
+        self, product, expected_qty, damaged_qty, damage_note, destination_warehouse
+    ):
         report = self.env["mer.discrepancy.report"].search(
             [
                 ("picking_id", "=", self.picking_id.id),
-                ("product_id", "=", line.product_id.id),
+                ("product_id", "=", product.id),
                 ("reason", "=", "damaged"),
             ],
             limit=1,
@@ -127,34 +219,52 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             "picking_id": self.picking_id.id,
             "purchase_id": self.picking_id.purchase_id.id,
             "warehouse_id": destination_warehouse.id if destination_warehouse else False,
-            "product_id": line.product_id.id,
-            "expected_qty": line.expected_qty,
+            "product_id": product.id,
+            "expected_qty": expected_qty,
             "actual_qty": 0.0,
-            "damaged_qty": line.damaged_qty,
+            "damaged_qty": damaged_qty,
             "reason": "damaged",
-            "solution_notes": _("Phát hiện %s hàng hư hỏng từ bước kiểm hàng thực tế. Ghi chú: %s") % (line.damaged_qty, line.damage_note or ""),
+            "solution_notes": _("Phát hiện %s hàng hư hỏng từ bước kiểm hàng thực tế. Ghi chú: %s") % (damaged_qty, damage_note or ""),
         }
         if report:
             report.write(vals)
             return report
         return self.env["mer.discrepancy.report"].create(vals)
 
-    def _create_or_update_excess_report(self, line, actual_qty):
+    def _prepare_excess_report_line_commands(self, wizard_lines):
+        lot_totals = {}
+        for line in wizard_lines.filtered("lot_id"):
+            lot_totals.setdefault(
+                line.lot_id.id,
+                {
+                    "lot_id": line.lot_id.id,
+                    "expected_qty": 0.0,
+                    "actual_qty": 0.0,
+                },
+            )
+            lot_totals[line.lot_id.id]["expected_qty"] += line.expected_qty
+            lot_totals[line.lot_id.id]["actual_qty"] += line.actual_qty
+        return [(5, 0, 0)] + [(0, 0, values) for values in lot_totals.values()]
+
+    def _create_or_update_excess_report(self, product, expected_qty, actual_qty, wizard_lines):
         report = self.env["mer.excess.receipt"].search(
             [
                 ("picking_id", "=", self.picking_id.id),
-                ("product_id", "=", line.product_id.id),
+                ("product_id", "=", product.id),
                 ("state", "!=", "done"),
             ],
             limit=1,
         )
         vals = {
             "picking_id": self.picking_id.id,
-            "product_id": line.product_id.id,
-            "expected_qty": line.expected_qty,
+            "product_id": product.id,
+            "expected_qty": expected_qty,
             "actual_qty": actual_qty,
             "notes": _("Được tạo tự động từ bước kiểm hàng thực tế tại cửa hàng."),
         }
+        line_commands = self._prepare_excess_report_line_commands(wizard_lines)
+        if line_commands and len(line_commands) > 1:
+            vals["line_ids"] = line_commands
         if report:
             report.write(vals)
             return report
@@ -185,16 +295,23 @@ class MerDeliveryDiscrepancyWizard(models.TransientModel):
             # Không chặn nhận dư từ NCC tại đây nữa, để logic report phía dưới xử lý đồng nhất cho cả 3 luồng
             actual_qty = line.actual_qty
 
-            self._write_actual_qty_to_moves(line.product_id, actual_qty, line.damaged_qty, line.damage_note)
+            self._write_actual_qty_to_moves(product, actual_qty, damaged_qty, damage_note)
+            self._write_actual_qty_to_move_lines(product_lines)
 
-            if line.damaged_qty > 0:
-                self._create_or_update_damaged_report(line, destination_warehouse)
+            if damaged_qty > 0:
+                self._create_or_update_damaged_report(
+                    product,
+                    expected_qty,
+                    damaged_qty,
+                    damage_note,
+                    destination_warehouse,
+                )
                 created_report_count += 1
 
             comparison = float_compare(
                 actual_qty,
-                line.expected_qty,
-                precision_rounding=line.product_id.uom_id.rounding or 0.01,
+                expected_qty,
+                precision_rounding=product.uom_id.rounding or 0.01,
             )
             if comparison > 0:
                 self._create_or_update_excess_report(line, actual_qty)
@@ -259,6 +376,7 @@ class MerDeliveryDiscrepancyWizardLine(models.TransientModel):
 
     wizard_id = fields.Many2one("mer.delivery.discrepancy.wizard")
     product_id = fields.Many2one("product.product", string="Sản phẩm")
+    lot_id = fields.Many2one("stock.lot", string="Lô hàng")
     expected_qty = fields.Float(string="SL hệ thống", readonly=True)
     actual_qty = fields.Float(string="SL thực nhận")
     damaged_qty = fields.Float(string="SL hư hỏng")

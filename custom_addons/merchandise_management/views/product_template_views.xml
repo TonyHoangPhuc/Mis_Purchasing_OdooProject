@@ -34,11 +34,9 @@
                 <group string="Khuyến mãi &amp; Hàng cận hạn" name="merchandise_promo" invisible="context.get('from_store_menu')">
                     <group>
                         <field name="current_promotion_price" widget="monetary" invisible="current_promotion_price == 0" class="text-success" string="Giá khuyến mãi"/>
-                        <field name="current_promotion_line_id" invisible="not current_promotion_line_id"/>
                     </group>
                     <group>
                         <field name="x_mer_expiry_days"/>
-                        <field name="x_mer_expiry_discount"/>
                     </group>
                 </group>
             </xpath>

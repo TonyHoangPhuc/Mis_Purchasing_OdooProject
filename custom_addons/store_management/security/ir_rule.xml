@@ -127,4 +127,11 @@
         <field name="groups" eval="[(4, ref('stock.group_stock_manager'))]"/>
     </record>
 
+    <record id="rule_mer_purchase_request_merchandise_no_draft" model="ir.rule">
+        <field name="name">Merchandise: Không hiện PR dạng nháp của Cửa hàng</field>
+        <field name="model_id" ref="merchandise_management.model_mer_purchase_request"/>
+        <field name="domain_force">['|', '|', ('state', '!=', 'draft'), ('store_id', '=', False), ('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('merchandise_management.group_merchandise_user')), (4, ref('merchandise_management.group_merchandise_manager'))]"/>
+    </record>
+
 </odoo>

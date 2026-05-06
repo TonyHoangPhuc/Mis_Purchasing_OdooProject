@@ -26,8 +26,16 @@ class MerchandiseDashboard(models.AbstractModel):
     @api.model
     def get_dashboard_data(self):
         purchase_request_model = self.env["mer.purchase.request"]
-
-        total_draft = purchase_request_model.search_count([("state", "=", "draft")])
+        
+        # Base domains for filtering Store draft PRs
+        # We only want to show Draft PRs if they DON'T have a store_id (meaning they are Merchandise internal PRs)
+        has_store_field = "store_id" in purchase_request_model._fields
+        
+        draft_domain = [("state", "=", "draft")]
+        if has_store_field:
+            draft_domain.append(("store_id", "=", False))
+            
+        total_draft = purchase_request_model.search_count(draft_domain)
         total_pending = purchase_request_model.search_count([("state", "in", ["submitted", "to_approve"])])
         total_processing = purchase_request_model.search_count([("state", "in", ["approved", "po_created"])])
         total_done = purchase_request_model.search_count([("state", "=", "done")])
@@ -36,7 +44,11 @@ class MerchandiseDashboard(models.AbstractModel):
             [("wm_qc_status", "=", "rejected"), ("state", "!=", "cancel")]
         )
 
-        recent_prs = purchase_request_model.search([], order="date_request desc, id desc", limit=24)
+        pipeline_domain = []
+        if has_store_field:
+            pipeline_domain = ["|", ("state", "!=", "draft"), ("store_id", "=", False)]
+            
+        recent_prs = purchase_request_model.search(pipeline_domain, order="date_request desc, id desc", limit=24)
         pipeline = []
         for request in recent_prs:
             if "store_id" in request._fields and request.store_id:

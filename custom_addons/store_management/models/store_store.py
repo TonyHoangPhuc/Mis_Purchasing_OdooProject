@@ -562,6 +562,7 @@ class StoreProductLine(models.Model):
     @api.depends("product_id", "location_id", "min_qty", "max_qty")
     def _compute_stock_metrics(self):
         Quant = self.env["stock.quant"].sudo()
+        current_dt = fields.Datetime.now()
         pending_qty_map = defaultdict(float)
         active_states = ("draft", "submitted", "to_approve", "approved", "po_created")
 
@@ -591,17 +592,18 @@ class StoreProductLine(models.Model):
             target_location_id = line.location_id.id if line.location_id else None
             
             if line.product_id and target_location_id:
-                # Use SQL for absolute isolation at the specific lot location
-                self.env.cr.execute("""
-                    SELECT SUM(quantity), SUM(quantity - reserved_quantity) 
-                    FROM stock_quant 
-                    WHERE product_id = %s AND location_id = %s
-                """, (line.product_id.id, target_location_id))
-                res = self.env.cr.fetchone()
-                if res:
-                    current_qty = res[0] if res[0] else 0.0
-                    available_qty = res[1] if res[1] else 0.0
-                
+                quants = Quant.search([
+                    ("product_id", "=", line.product_id.id),
+                    ("location_id", "child_of", target_location_id),
+                    "|",
+                    ("lot_id", "=", False),
+                    "|",
+                    ("lot_id.expiration_date", "=", False),
+                    ("lot_id.expiration_date", ">", current_dt),
+                ])
+                current_qty = sum(quants.mapped("quantity"))
+                available_qty = sum(quants.mapped("available_quantity"))
+
                 pending_qty = pending_qty_map.get((line.store_id.id, line.product_id.id), 0.0)
             
             suggested_qty = 0.0

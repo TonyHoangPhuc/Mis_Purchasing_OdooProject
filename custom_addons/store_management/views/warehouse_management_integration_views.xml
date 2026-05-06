@@ -81,6 +81,9 @@
                 <field name="store_receipt_issue_type" invisible="1"/>
                 <field name="store_rejected_return_picking_id" invisible="1"/>
                 <field name="wm_damaged_qty" invisible="1"/>
+                <field name="store_use_stock_action_rules" invisible="1"/>
+                <field name="store_can_check_availability" invisible="1"/>
+                <field name="store_can_validate_delivery" invisible="1"/>
                 <button name="%(store_management.action_mer_delivery_discrepancy_wizard)d" 
                         string="Kiểm hàng thực tế (Báo dư)" 
                         type="action" 
@@ -116,7 +119,7 @@
                         string="Xác nhận nhập hàng vào kho"
                         type="object"
                         class="btn-primary"
-                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or wm_damaged_qty &gt; 0 or state in ('done', 'cancel') or wm_qc_status in ['passed', 'rejected']"
+                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or wm_damaged_qty &gt; 0 or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
                         groups="store_management.group_store_user"/>
                 <button name="action_return_store_damaged_receipt_to_supplier"
                         string="Nhập hàng đạt &amp; xử lý lỗi"
@@ -126,16 +129,16 @@
                         groups="store_management.group_store_user"/>
             </xpath>
             <xpath expr="//button[@name='button_validate'][1]" position="attributes">
-                <attribute name="invisible">store_route_type == 'central_to_store' or state in ('draft', 'confirmed', 'done', 'cancel') or (wm_is_incoming_receipt and wm_qc_status != 'passed')</attribute>
+                <attribute name="invisible">store_route_type in ['supplier_to_central', 'supplier_to_store', 'central_to_store'] or state != 'assigned' or (wm_is_incoming_receipt and wm_qc_status != 'passed') or (store_use_stock_action_rules and not store_can_validate_delivery)</attribute>
             </xpath>
             <xpath expr="//button[@name='button_validate'][2]" position="attributes">
-                <attribute name="invisible">store_route_type == 'central_to_store' or state in ('waiting', 'assigned', 'done', 'cancel') or (wm_is_incoming_receipt and wm_qc_status != 'passed')</attribute>
+                <attribute name="invisible">1</attribute>
             </xpath>
             <xpath expr="//button[@name='action_confirm']" position="attributes">
                 <attribute name="invisible">store_route_type == 'central_to_store' or state != 'draft'</attribute>
             </xpath>
             <xpath expr="//button[@name='action_assign']" position="attributes">
-                <attribute name="invisible">wm_is_incoming_receipt or store_route_type == 'central_to_store' or state not in ('confirmed', 'waiting', 'assigned')</attribute>
+                <attribute name="invisible">wm_is_incoming_receipt or (store_use_stock_action_rules and not store_can_check_availability) or (not store_use_stock_action_rules and state not in ('confirmed', 'waiting'))</attribute>
             </xpath>
         </field>
     </record>
@@ -507,7 +510,8 @@
         parent="store_management.menu_warehouse_order_status_root"
         action="store_management.action_warehouse_damaged_orders"
         sequence="20"
-        groups="warehouse_management.group_receiving_qc_user"
+        groups="base.group_no_one"
+        active="False"
     />
     <menuitem
         id="menu_warehouse_route_orders"
@@ -515,7 +519,8 @@
         parent="store_management.menu_warehouse_order_status_root"
         action="store_management.action_warehouse_route_orders"
         sequence="30"
-        groups="warehouse_management.group_receiving_qc_user"
+        groups="base.group_no_one"
+        active="False"
     />
     <menuitem
         id="menu_warehouse_route_order_history"
@@ -615,26 +620,22 @@
                         class="btn-primary"
                         groups="store_management.group_store_user"
                         invisible="state != 'draft' or submitted_to_merchandise"/>
-                <button name="action_create_replenishment_pr"
-                        string="Tạo PR bù hàng"
-                        type="object"
-                        class="btn-primary"
-                        groups="merchandise_management.group_merchandise_user"
-                        invisible="reason != 'shortage' or replenishment_request_id or state != 'draft' or not submitted_to_merchandise"/>
                 <field name="submitted_to_merchandise" invisible="1"/>
             </xpath>
-            <xpath expr="//button[@name='action_create_replenishment_po']" position="attributes">
-                <attribute name="invisible">1</attribute>
+            <xpath expr="//button[@name='action_create_replenishment_pr']" position="attributes">
+                <attribute name="invisible">context.get('from_store_menu') or reason not in ('shortage', 'damaged') or replenishment_request_id or state != 'reported' or not submitted_to_merchandise</attribute>
             </xpath>
             <xpath expr="//button[@name='action_create_return_picking']" position="attributes">
                 <attribute name="invisible">reason != 'overage' or return_picking_id or state != 'draft' or not purchase_id</attribute>
             </xpath>
             <xpath expr="//field[@name='purchase_id']" position="before">
                 <field name="picking_id"/>
-                <field name="mer_request_id" readonly="1"/>
+                <field name="mer_request_id" string="PR gốc" readonly="1"/>
                 <field name="source_route_label" readonly="1"/>
                 <field name="handling_status" readonly="1"/>
-                <field name="replenishment_request_id" readonly="1" invisible="not replenishment_request_id"/>
+            </xpath>
+            <xpath expr="//field[@name='purchase_id']" position="attributes">
+                <attribute name="invisible">1</attribute>
             </xpath>
         </field>
     </record>
@@ -654,6 +655,20 @@
                 <field name="handling_status" optional="show"/>
                 <field name="replenishment_request_id" optional="show"/>
                 <field name="submitted_to_merchandise" optional="show"/>
+            </xpath>
+            <xpath expr="//field[@name='warehouse_id']" position="replace">
+                <field name="display_destination_name" string="Cửa hàng"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mer_discrepancy_report_form_inherit_store" model="ir.ui.view">
+        <field name="name">mer.discrepancy.report.form.inherit.store</field>
+        <field name="model">mer.discrepancy.report</field>
+        <field name="inherit_id" ref="merchandise_management.view_mer_discrepancy_report_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='warehouse_id']" position="replace">
+                <field name="display_destination_name" string="Cửa hàng" readonly="1"/>
             </xpath>
         </field>
     </record>

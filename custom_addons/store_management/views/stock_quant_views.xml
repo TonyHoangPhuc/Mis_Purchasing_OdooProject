@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_stock_quant_search_inherit_store" model="ir.ui.view">
+        <field name="name">stock.quant.search.inherit.store</field>
+        <field name="model">stock.quant</field>
+        <field name="inherit_id" ref="stock.quant_search_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='internal_loc']" position="after">
+                <filter
+                    name="not_expired_lots"
+                    string="Còn hạn"
+                    domain="['|', ('lot_id', '=', False), '|', ('lot_id.expiration_date', '=', False), ('lot_id.expiration_date', '&gt;', context_today())]"
+                />
+            </xpath>
+        </field>
+    </record>
+
+    <record id="stock.stock_quant_action" model="ir.actions.act_window">
+        <field name="context">
+        {
+            'search_default_internal_loc': 1,
+            'search_default_not_expired_lots': 1,
+            'inventory_mode':True,
+        }
+        </field>
+    </record>
+</odoo>
