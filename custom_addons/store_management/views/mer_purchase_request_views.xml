@@ -21,7 +21,7 @@
                     type="object"
                     string="Xác nhận đủ hàng"
                     class="btn-success"
-                    invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or state not in ['approved', 'po_created']"
+                    invisible="not context.get('central_check_menu') or ready_delivery_count == 0 or insufficient_stock_count != 0 or state not in ['approved', 'po_created']"
                 />
             </xpath>
 
@@ -121,7 +121,7 @@
                     <list editable="bottom" create="state == 'draft'" delete="state == 'draft'">
                         <field name="product_id" readonly="parent.state != 'draft'"/>
                         <field name="product_qty" string="Số lượng yêu cầu" readonly="parent.state != 'draft'"/>
-                        <field name="budget_id" optional="show"/>
+                        <field name="budget_id" column_invisible="True"/>
                         <field name="product_uom_id" readonly="1"/>
                         <field name="price_unit" string="Đơn giá dự kiến" readonly="parent.state != 'draft'"/>
                         <field name="price_subtotal" string="Thành tiền" sum="Tổng tiền"/>

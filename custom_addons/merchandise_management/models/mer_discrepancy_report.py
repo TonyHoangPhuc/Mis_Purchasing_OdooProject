@@ -11,7 +11,7 @@ class MerDiscrepancyReport(models.Model):
     
     state = fields.Selection([
         ('draft', 'Mới'),
-        ('reported', 'Chờ Merchandise duyệt'),
+        ('reported', 'Chờ Merchandise tạo PR bù hàng'),
         ('done', 'Hoàn tất'),
         ('cancel', 'Hủy')
     ], string='Trạng thái', default='draft', tracking=True)
@@ -84,6 +84,17 @@ class MerDiscrepancyReport(models.Model):
                 subtype_xmlid='mail.mt_note'
             )
         self.write({'state': 'done'})
+
+    # Gửi báo cáo cho Merchandise duyệt
+    def action_submit(self):
+        for report in self:
+            if report.state != 'draft':
+                continue
+            report.write({
+                'state': 'reported',
+                'submitted_to_merchandise': True
+            })
+            report.message_post(body=_("Đã gửi báo cáo sai lệch hàng hóa đến đội Merchandise."))
 
 
     # Kiểm tra tính đúng đắn giữa số lượng và lý do

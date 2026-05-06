@@ -10,6 +10,7 @@ class StockPicking(models.Model):
         string="Yêu cầu Merchandise",
         compute="_compute_mer_request_id",
         compute_sudo=True,
+        store=True,
     )
 
     wm_qc_status = fields.Selection(

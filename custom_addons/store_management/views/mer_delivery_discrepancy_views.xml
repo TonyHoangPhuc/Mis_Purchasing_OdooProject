@@ -17,10 +17,7 @@
                 <field name="expected_qty" string="SL hệ thống" sum="Tổng dự kiến"/>
                 <field name="actual_qty" string="SL thực tế" sum="Tổng thực tế"/>
                 <field name="discrepancy_qty" sum="Tổng dư" decoration-danger="discrepancy_qty > 0" decoration-bf="discrepancy_qty > 0"/>
-                <field name="status_badge" widget="badge"
-                    decoration-info="status_badge == 'new'"
-                    decoration-success="status_badge == 'done'"
-                    decoration-danger="status_badge == 'cancel'"/>
+                <field name="state" string="Trạng thái" widget="badge" decoration-info="state == 'draft'" decoration-warning="state == 'reported'" decoration-primary="state == 'returning'" decoration-success="state == 'done'" decoration-danger="state == 'cancel'"/>
             </list>
         </field>
     </record>
@@ -33,16 +30,13 @@
                 <header>
                     <button name="action_submit" string="Gửi Merchandise" type="object" class="oe_highlight" invisible="state != 'draft'" groups="store_management.group_store_user"/>
                     
-                    <button name="action_merchandise_approve" string="Phê duyệt" type="object" class="oe_highlight" 
+                    <button name="action_create_recovery_picking" string="Tạo đơn thu hồi" type="object" class="oe_highlight" 
                             invisible="context.get('from_store_menu') or state != 'reported'" groups="merchandise_management.group_merchandise_user"/>
                     
-                    <button name="action_create_recovery_picking" string="Tạo đơn thu hồi" type="object" class="oe_highlight" 
-                            invisible="state not in ['reported', 'approved']" groups="merchandise_management.group_merchandise_user"/>
-                    
                     <button name="action_done" string="Xác nhận Kho đã nhận hàng" type="object" class="oe_highlight" 
-                            invisible="context.get('from_store_menu') or context.get('from_merchandise_menu') or state != 'returning'" groups="warehouse_management.group_receiving_qc_user"/>
+                            invisible="context.get('from_merchandise_menu') or context.get('from_store_menu') or state != 'returning'" groups="warehouse_management.group_receiving_qc_user"/>
                     
-                    <field name="state" widget="statusbar" statusbar_visible="draft,reported,approved,returning,done,cancel"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,reported,returning,done,cancel"/>
                 </header>
                 <sheet>
                     <div class="oe_title">
@@ -123,8 +117,8 @@
         <field name="res_model">mer.excess.receipt</field>
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="view_mer_excess_receipt_list"/>
-        <field name="domain">[('state', '=', 'draft'), ('store_id', '!=', False)]</field>
-        <field name="context">{'group_by': 'picking_id'}</field>
+        <field name="domain">[('store_id', '!=', False)]</field>
+        <field name="context">{'group_by': 'picking_id', 'from_store_menu': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Chưa có báo cáo nhận dư hàng cần gửi Merchandise.
@@ -137,8 +131,8 @@
         <field name="res_model">mer.excess.receipt</field>
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="view_mer_excess_receipt_list"/>
-        <field name="domain">[('state', 'in', ['reported', 'approved'])]</field>
-        <field name="context">{'group_by': 'picking_id'}</field>
+        <field name="domain">[('state', 'not in', ['draft'])]</field>
+        <field name="context">{'group_by': 'picking_id', 'from_merchandise_menu': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Chưa có báo cáo nhận dư hàng cần Merchandise xử lý.

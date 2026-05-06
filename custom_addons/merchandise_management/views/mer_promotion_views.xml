@@ -7,6 +7,7 @@
         <field name="arch" type="xml">
             <list string="Sản phẩm áp dụng" editable="bottom">
                 <field name="product_id" string="Sản phẩm"/>
+                <field name="warehouse_id" string="Cửa hàng" domain="[('id', 'in', parent.target_store_ids)]" options="{'no_create': True}"/>
                 <field name="lst_price" string="Giá gốc" readonly="1"/>
                 <field name="discount_rate" string="Mức giảm (%)" widget="float" required="1"/>
                 <field name="limit_qty"/>

@@ -107,25 +107,37 @@
                         string="Xác nhận nhập hàng vào kho"
                         type="object"
                         class="btn-success"
-                        invisible="store_route_type != 'supplier_to_central' or not store_actual_check_done or wm_damaged_qty &gt; 0 or state in ('done', 'cancel') or wm_qc_status == 'passed' or wm_qc_status == 'rejected'"
+                        invisible="store_route_type != 'supplier_to_central' or not store_actual_check_done or store_receipt_has_discrepancy or state in ('done', 'cancel') or wm_qc_status == 'passed' or wm_qc_status == 'rejected'"
+                        groups="warehouse_management.group_receiving_qc_user"/>
+                <button name="action_return_central_damaged_receipt_to_supplier"
+                        string="Nhập hàng đạt &amp; xử lý lỗi"
+                        type="object"
+                        class="btn-danger"
+                        invisible="store_route_type != 'supplier_to_central' or not store_actual_check_done or not store_show_mixed_button or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
                         groups="warehouse_management.group_receiving_qc_user"/>
                 <button name="action_return_central_damaged_receipt_to_supplier"
                         string="Xử lý hàng lỗi"
                         type="object"
                         class="btn-danger"
-                        invisible="store_route_type != 'supplier_to_central' or not store_actual_check_done or wm_damaged_qty &lt;= 0 or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
+                        invisible="store_route_type != 'supplier_to_central' or not store_actual_check_done or not store_show_damaged_only_button or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
                         groups="warehouse_management.group_receiving_qc_user"/>
                 <button name="action_confirm_store_receipt_to_stock"
                         string="Xác nhận nhập hàng vào kho"
                         type="object"
                         class="btn-primary"
-                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or wm_damaged_qty &gt; 0 or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
+                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or store_receipt_has_discrepancy or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
                         groups="store_management.group_store_user"/>
                 <button name="action_return_store_damaged_receipt_to_supplier"
                         string="Nhập hàng đạt &amp; xử lý lỗi"
                         type="object"
                         class="btn-danger"
-                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or wm_damaged_qty &lt;= 0 or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
+                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or not store_show_mixed_button or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
+                        groups="store_management.group_store_user"/>
+                <button name="action_return_store_damaged_receipt_to_supplier"
+                        string="Xử lý hàng lỗi"
+                        type="object"
+                        class="btn-danger"
+                        invisible="store_route_type not in ['supplier_to_store', 'central_to_store'] or picking_type_code != 'incoming' or not store_actual_check_done or not store_show_damaged_only_button or state in ('done', 'cancel') or wm_qc_status == 'rejected'"
                         groups="store_management.group_store_user"/>
             </xpath>
             <xpath expr="//button[@name='button_validate'][1]" position="attributes">
@@ -464,7 +476,7 @@
         <field name="res_model">mer.excess.receipt</field>
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="store_management.view_mer_excess_receipt_list"/>
-        <field name="domain">[('source_route_type', '=', 'central_to_store'), ('state', '=', 'returning'), ('recovery_picking_id', '!=', False)]</field>
+        <field name="domain">[('source_route_type', '=', 'central_to_store'), ('state', 'in', ['returning', 'done']), ('recovery_picking_id', '!=', False)]</field>
         <field name="context">{'group_by': 'state'}</field>
     </record>
 
@@ -619,14 +631,14 @@
                         type="object"
                         class="btn-primary"
                         groups="store_management.group_store_user"
-                        invisible="state != 'draft' or submitted_to_merchandise"/>
+                        invisible="state != 'draft'"/>
                 <field name="submitted_to_merchandise" invisible="1"/>
             </xpath>
             <xpath expr="//button[@name='action_create_replenishment_pr']" position="attributes">
                 <attribute name="invisible">context.get('from_store_menu') or reason not in ('shortage', 'damaged') or replenishment_request_id or state != 'reported' or not submitted_to_merchandise</attribute>
             </xpath>
             <xpath expr="//button[@name='action_create_return_picking']" position="attributes">
-                <attribute name="invisible">reason != 'overage' or return_picking_id or state != 'draft' or not purchase_id</attribute>
+                <attribute name="invisible">context.get('from_store_menu') or reason != 'overage' or return_picking_id or state != 'draft' or not purchase_id</attribute>
             </xpath>
             <xpath expr="//field[@name='purchase_id']" position="before">
                 <field name="picking_id"/>
@@ -636,6 +648,9 @@
             </xpath>
             <xpath expr="//field[@name='purchase_id']" position="attributes">
                 <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//field[@name='warehouse_id']" position="replace">
+                <field name="display_destination_name" string="Cửa hàng" readonly="1"/>
             </xpath>
         </field>
     </record>
@@ -662,16 +677,7 @@
         </field>
     </record>
 
-    <record id="view_mer_discrepancy_report_form_inherit_store" model="ir.ui.view">
-        <field name="name">mer.discrepancy.report.form.inherit.store</field>
-        <field name="model">mer.discrepancy.report</field>
-        <field name="inherit_id" ref="merchandise_management.view_mer_discrepancy_report_form"/>
-        <field name="arch" type="xml">
-            <xpath expr="//field[@name='warehouse_id']" position="replace">
-                <field name="display_destination_name" string="Cửa hàng" readonly="1"/>
-            </xpath>
-        </field>
-    </record>
+
 
     <record id="merchandise_management.action_mer_discrepancy_report_shortage" model="ir.actions.act_window">
         <field name="domain">[('reason', '=', 'shortage'), ('submitted_to_merchandise', '=', True)]</field>
@@ -688,23 +694,23 @@
         <field name="res_model">mer.discrepancy.report</field>
         <field name="view_mode">list,form</field>
         <field name="domain">[('reason', '=', 'overage'), ('warehouse_id.mis_role', '=', 'store')]</field>
-        <field name="context">{'default_reason': 'overage'}</field>
+        <field name="context">{'default_reason': 'overage', 'from_store_menu': 1}</field>
     </record>
 
     <record id="action_store_discrepancy_report_shortage" model="ir.actions.act_window">
         <field name="name">Báo cáo nhận thiếu hàng</field>
         <field name="res_model">mer.discrepancy.report</field>
         <field name="view_mode">list,form</field>
-        <field name="domain">[('reason', '=', 'shortage'), ('warehouse_id.mis_role', '=', 'store'), ('state', '=', 'draft'), ('submitted_to_merchandise', '=', False)]</field>
-        <field name="context">{'default_reason': 'shortage'}</field>
+        <field name="domain">[('reason', '=', 'shortage'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="context">{'default_reason': 'shortage', 'from_store_menu': 1}</field>
     </record>
 
     <record id="action_store_discrepancy_report_damaged" model="ir.actions.act_window">
         <field name="name">Báo cáo hàng lỗi</field>
         <field name="res_model">mer.discrepancy.report</field>
         <field name="view_mode">list,form</field>
-        <field name="domain">[('reason', '=', 'damaged'), ('warehouse_id.mis_role', '=', 'store'), ('state', '=', 'draft'), ('submitted_to_merchandise', '=', False)]</field>
-        <field name="context">{'default_reason': 'damaged'}</field>
+        <field name="domain">[('reason', '=', 'damaged'), ('warehouse_id.mis_role', '=', 'store')]</field>
+        <field name="context">{'default_reason': 'damaged', 'from_store_menu': 1}</field>
     </record>
 
     <record id="menu_mer_excess_receipt" model="ir.ui.menu">

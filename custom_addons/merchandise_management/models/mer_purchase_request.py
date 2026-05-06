@@ -176,6 +176,7 @@ class MerPurchaseRequest(models.Model):
     date_request = fields.Date(
         string='Ngày yêu cầu',
         default=lambda self: fields.Date.context_today(self),
+        tracking=True,
     )
     
     line_ids = fields.One2many('mer.purchase.request.line', 'request_id', string='Chi tiết sản phẩm')

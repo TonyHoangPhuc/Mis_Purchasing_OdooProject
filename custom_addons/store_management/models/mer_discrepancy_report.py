@@ -190,39 +190,30 @@ class MerDiscrepancyReport(models.Model):
             if report.state == "done":
                 report.handling_status = _("Hoàn tất")
                 continue
-            if report.reason == "shortage":
+            if report.reason in ("shortage", "damaged"):
                 if report.replenishment_request_id:
                     report.handling_status = _("Đã tạo PR bù")
-                elif report.submitted_to_merchandise:
+                elif report.submitted_to_merchandise or report.state == 'reported':
                     report.handling_status = _("Chờ Merchandise tạo đơn PR bù hàng")
                 else:
                     report.handling_status = _("Chờ Cửa hàng gửi Merchandise")
-            elif report.state == "done":
-                report.handling_status = _("Đã xử lý")
             elif report.reason == "overage":
                 if report.return_picking_id and report.return_picking_id.state == "done":
                     report.handling_status = _("Đã xử lý xong")
                 elif report.return_picking_id:
                     report.handling_status = _("Chờ thu hồi hàng dư")
-                elif report.submitted_to_merchandise:
-                    report.handling_status = _("Chờ Merchandise xử lý")
+                elif report.submitted_to_merchandise or report.state == 'reported':
+                    report.handling_status = _("Chờ Merchandise tạo đơn thu hồi")
                 else:
-                    report.handling_status = _("Chờ Cửa hàng gửi Mer")
+                    report.handling_status = _("Chờ Cửa hàng gửi Merchandise")
             else:
-                report.handling_status = _("Đang xử lý")
+                report.handling_status = _("Chờ xử lý")
 
     def _mark_done_if_resolved(self):
-        for report in self.filtered(lambda current: current.state == "draft"):
+        for report in self.filtered(lambda current: current.state in ("draft", "reported")):
             if report.reason == "shortage" and report.replenishment_request_id:
                 report.write({"state": "done"})
-            elif (
-                report.reason == "damaged"
-                and report.replenishment_request_id
-                and (
-                    not report.return_picking_id
-                    or report.return_picking_id.state in ("done", "cancel")
-                )
-            ):
+            elif report.reason == "damaged" and report.replenishment_request_id:
                 report.write({"state": "done"})
 
     def action_submit(self):
@@ -292,8 +283,8 @@ class MerDiscrepancyReport(models.Model):
         self.ensure_one()
         if not self.env.user.has_group("merchandise_management.group_merchandise_user"):
             raise UserError(_("Chỉ bộ phận Merchandise mới được tạo PR bù hàng."))
-        if self.state != "draft":
-            raise UserError(_("Chỉ báo cáo đang ở trạng thái nháp mới được tạo PR bù hàng."))
+        if self.state != "reported":
+            raise UserError(_("Chỉ báo cáo đã được gửi Merchandise (đang chờ xử lý) mới được tạo PR bù hàng."))
         if not self.submitted_to_merchandise:
             raise UserError(_("Báo cáo cần được Cửa hàng gửi Merchandise trước khi tạo PR bù hàng."))
         if self.reason not in ("shortage", "damaged"):
@@ -326,6 +317,7 @@ class MerDiscrepancyReport(models.Model):
         request_vals = {
             "store_id": store.id if store else False,
             "warehouse_id": warehouse.id,
+            "date_request": fields.Date.context_today(self),
             "state": "submitted",
             "is_replenishment_from_discrepancy": True,
             "source_discrepancy_report_id": self.id,

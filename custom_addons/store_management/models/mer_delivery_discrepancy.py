@@ -74,7 +74,7 @@ class MerExcessReceipt(models.Model):
     state = fields.Selection(
         [
             ("draft", "Nháp"),
-            ("reported", "Chờ Merchandise duyệt"),
+            ("reported", "Chờ Merchandise tạo đơn thu hồi"),
             ("approved", "Merchandise đã duyệt"),
             ("returning", "Đang thu hồi hàng"),
             ("done", "Hoàn tất"),
@@ -175,12 +175,12 @@ class MerExcessReceipt(models.Model):
                 rec.handling_status = _("Đã hủy")
             elif rec.state == "done":
                 rec.handling_status = _("Đã thu hồi")
-            elif rec.recovery_picking_id:
-                rec.handling_status = _("Đã gửi Kho tổng")
+            elif rec.state == "returning" or rec.recovery_picking_id:
+                rec.handling_status = _("Đang thu hồi hàng")
             elif rec.state == "approved" or rec.central_stock_adjusted:
-                rec.handling_status = _("Chờ Merchandise gửi Kho tổng")
+                rec.handling_status = _("Sẵn sàng tạo đơn thu hồi")
             elif rec.state == "reported":
-                rec.handling_status = _("Chờ Merchandise phê duyệt")
+                rec.handling_status = _("Chờ Merchandise tạo đơn thu hồi")
             else:
                 rec.handling_status = _("Chờ Cửa hàng gửi Merchandise")
 
@@ -500,8 +500,8 @@ class MerExcessReceipt(models.Model):
     def action_create_recovery_picking(self):
         """Tạo phiếu thu hồi hàng từ địa điểm 'Chờ trả' của Cửa hàng về Kho tổng."""
         self.ensure_one()
-        if self.state != "approved":
-            raise UserError(_("Merchandise cần phê duyệt báo cáo nhận dư trước khi tạo đơn thu hồi."))
+        if self.state not in ("reported", "approved"):
+            raise UserError(_("Merchandise cần duyệt hoặc báo cáo cần ở trạng thái sẵn sàng trước khi tạo đơn thu hồi."))
         if self.recovery_picking_id:
             raise UserError(_("Phiếu thu hồi đã được tạo."))
 

@@ -166,6 +166,20 @@ class MerPurchaseRequest(models.Model):
                 self.store_id = store
         return self._remove_unavailable_store_lines()
 
+    def write(self, vals):
+        res = super().write(vals)
+        if "state" in vals and vals["state"] == "done":
+            for request in self:
+                if request.source_discrepancy_report_id and request.source_discrepancy_report_id.picking_id:
+                    origin_picking = request.source_discrepancy_report_id.picking_id
+                    # Tìm các PR gốc liên quan đến phiếu kho này
+                    related_origin_requests = self.env["mer.purchase.request.line"].search([
+                        ("store_receipt_picking_id", "=", origin_picking.id)
+                    ]).mapped("request_id")
+                    if related_origin_requests:
+                        related_origin_requests._sync_state_with_logistics()
+        return res
+
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
@@ -470,11 +484,8 @@ class MerPurchaseRequest(models.Model):
                 lambda picking: picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id == line.request_warehouse_id
             )
-            return bool(
-                receipt_pickings.filtered(
-                    lambda picking: picking.state == "done" or picking.wm_qc_status == "rejected"
-                )
-            )
+            # Chỉ coi là xong khi đã nhận hàng thành công (done)
+            return bool(receipt_pickings.filtered(lambda p: p.state == "done"))
 
         resolved_discrepancy_report = bool(
             line.store_receipt_picking_id
@@ -490,45 +501,25 @@ class MerPurchaseRequest(models.Model):
             )
         )
 
+        if line.fulfillment_method == "supplier":
+            receipt_pickings = line.purchase_order_id.picking_ids.filtered(
+                lambda picking: picking.picking_type_code == "incoming"
+                and picking.picking_type_id.warehouse_id == line.request_warehouse_id
+            )
+            return bool(receipt_pickings.filtered(lambda p: p.state == "done"))
+
         if line.fulfillment_method == "supplier_central":
-            if not line.purchase_order_id:
-                return False
+            # Hoàn tất ngay khi Kho tổng nhận xong hàng từ NCC
             receipt_pickings = line.purchase_order_id.picking_ids.filtered(
                 lambda picking: picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id
                 and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
             )
-            resolved_central_issue_report = bool(
-                receipt_pickings
-                and self.env["mer.discrepancy.report"].search(
-                    [
-                        ("picking_id", "in", receipt_pickings.ids),
-                        ("product_id", "=", line.product_id.id),
-                        ("reason", "in", ["damaged", "shortage"]),
-                        ("state", "!=", "cancel"),
-                        ("replenishment_request_id", "!=", False),
-                    ],
-                    limit=1,
-                )
-            )
-            if receipt_pickings.filtered(lambda picking: picking.wm_qc_status == "rejected"):
-                return resolved_central_issue_report
-            if (
-                resolved_central_issue_report
-                and receipt_pickings.filtered(
-                    lambda picking: picking.state in ("done", "cancel")
-                    or picking.wm_qc_status in ("passed", "rejected")
-                )
-            ):
-                return True
-            if not receipt_pickings.filtered(lambda picking: picking.state == "done"):
-                return False
-            if resolved_discrepancy_report:
-                return True
-            return line.internal_flow_state in ("delivered", "rejected")
+            return bool(receipt_pickings.filtered(lambda p: p.state == "done"))
 
         if line.fulfillment_method == "internal":
-            return line.internal_flow_state in ("delivered", "rejected") or resolved_discrepancy_report
+            # Hoàn tất khi Cửa hàng nhận xong hàng
+            return line.internal_flow_state == "delivered" or (line.store_receipt_picking_id and line.store_receipt_picking_id.state == "done")
 
         return False
 
@@ -567,9 +558,6 @@ class MerPurchaseRequest(models.Model):
                     except Exception as e:
                         request.message_post(body=_("Hệ thống không thể tự động tạo hóa đơn cho PO %s: %s") % (po.name, str(e)))
             elif has_started_documents:
-                if request.is_replenishment_from_discrepancy:
-                    request.state = "done"
-                    continue
                 request.state = "po_created"
 
     def _create_internal_pickings_for_lines(self, lines):
@@ -590,9 +578,39 @@ class MerPurchaseRequest(models.Model):
         created_pickings = self.env["stock.picking"]
         transit_location = self.company_id.internal_transit_location_id or self.env.ref('stock.stock_location_inter_company', raise_if_not_found=False)
 
+        source_picking_id = self.env.context.get("store_source_picking_id")
+        source_picking = self.env["stock.picking"].browse(source_picking_id) if source_picking_id else False
+
         for source_warehouse_id, grouped_request_lines in grouped_lines.items():
             source_warehouse = self.env["stock.warehouse"].browse(source_warehouse_id)
             dest_location = transit_location if transit_location else self.warehouse_id.lot_stock_id
+
+            # Chuẩn bị move_ids, có tính toán lại SL nếu có source_picking
+            move_vals_list = []
+            for line in grouped_request_lines:
+                qty_to_send = 0 if source_picking else line.approved_qty
+                if source_picking:
+                    source_move = source_picking.move_ids.filtered(
+                        lambda m: m.product_id == line.product_id and m.state == "done"
+                    )[:1]
+                    if source_move:
+                        # Quy tắc: Chỉ giao phần "đủ" (min giữa thực nhận và PO)
+                        qty_to_send = min(source_move.quantity, line.approved_qty)
+                
+                if qty_to_send <= 0:
+                    continue
+
+                move_vals_list.append((0, 0, {
+                    "description_picking": line.product_id.display_name,
+                    "product_id": line.product_id.id,
+                    "product_uom_qty": qty_to_send,
+                    "product_uom": line.product_uom_id.id,
+                    "location_id": source_warehouse.lot_stock_id.id,
+                    "location_dest_id": dest_location.id,
+                }))
+
+            if not move_vals_list:
+                continue
 
             # 1. Create Central Delivery Picking (WH -> Transit)
             central_picking = self.env["stock.picking"].sudo().create(
@@ -604,25 +622,38 @@ class MerPurchaseRequest(models.Model):
                     "location_dest_id": dest_location.id,
                     "origin": self.name + _(" - Giao hàng"),
                     "scheduled_date": fields.Datetime.now(),
-                    "move_ids": [
-                        (
-                            0,
-                            0,
-                            {
-                                "description_picking": line.product_id.display_name,
-                                "product_id": line.product_id.id,
-                                "product_uom_qty": line.approved_qty,
-                                "product_uom": line.product_uom_id.id,
-                                "location_id": source_warehouse.lot_stock_id.id,
-                                "location_dest_id": dest_location.id,
-                            },
-                        )
-                        for line in grouped_request_lines
-                    ],
+                    "move_ids": move_vals_list,
                 }
             )
             central_picking.action_confirm()
-            central_picking.action_assign()
+            
+            # SAO CHÉP SỐ LÔ từ NCC sang phiếu Giao
+            if source_picking:
+                for move in central_picking.move_ids:
+                    source_move = source_picking.move_ids.filtered(
+                        lambda m: m.product_id == move.product_id and m.state == "done"
+                    )[:1]
+                    if source_move and source_move.move_line_ids:
+                        # Xóa move lines mặc định để gán lot chính xác
+                        move.move_line_ids.unlink()
+                        remaining_qty = move.product_uom_qty
+                        for sml in source_move.move_line_ids:
+                            if remaining_qty <= 0:
+                                break
+                            take_qty = min(sml.quantity, remaining_qty)
+                            self.env["stock.move.line"].sudo().create({
+                                "picking_id": central_picking.id,
+                                "move_id": move.id,
+                                "product_id": move.product_id.id,
+                                "product_uom_id": move.product_uom.id,
+                                "location_id": move.location_id.id,
+                                "location_dest_id": move.location_dest_id.id,
+                                "lot_id": sml.lot_id.id,
+                                "quantity": take_qty,
+                            })
+                            remaining_qty -= take_qty
+            else:
+                central_picking.action_assign()
             
             store_picking = central_picking
             # 2. Create Store Receipt Picking (Transit -> Store) if transit exists
@@ -641,22 +672,44 @@ class MerPurchaseRequest(models.Model):
                                 0,
                                 0,
                                 {
-                                    "description_picking": line.product_id.display_name,
-                                    "product_id": line.product_id.id,
-                                    "product_uom_qty": line.approved_qty,
-                                    "product_uom": line.product_uom_id.id,
+                                    "description_picking": move.product_id.display_name,
+                                    "product_id": move.product_id.id,
+                                    "product_uom_qty": move.product_uom_qty,
+                                    "product_uom": move.product_uom.id,
                                     "location_id": dest_location.id,
                                     "location_dest_id": self.warehouse_id.lot_stock_id.id,
-                                    "move_orig_ids": [(6, 0, [central_move.id])],
+                                    "move_orig_ids": [(6, 0, [move.id])],
                                 },
                             )
-                            for line, central_move in zip(grouped_request_lines, central_picking.move_ids)
+                            for move in central_picking.move_ids
                         ],
                     }
                 )
                 store_picking.action_confirm()
+                
+                # Sao chép Lô sang phiếu NHẬN của Cửa hàng
+                if source_picking:
+                    for store_move in store_picking.move_ids:
+                        central_move = store_move.move_orig_ids[:1]
+                        if central_move and central_move.move_line_ids:
+                            store_move.move_line_ids.unlink()
+                            for cml in central_move.move_line_ids:
+                                self.env["stock.move.line"].sudo().create({
+                                    "picking_id": store_picking.id,
+                                    "move_id": store_move.id,
+                                    "product_id": store_move.product_id.id,
+                                    "product_uom_id": store_move.product_uom.id,
+                                    "location_id": store_move.location_id.id,
+                                    "location_dest_id": store_move.location_dest_id.id,
+                                    "lot_id": cml.lot_id.id,
+                                    "quantity": cml.quantity,
+                                })
             
-            grouped_request_lines.with_context(store_skip_sync_rule=True).write(
+            # Cập nhật thông tin vào line của PR
+            lines_in_picking = grouped_request_lines.filtered(
+                lambda l: l.product_id in central_picking.move_ids.mapped("product_id")
+            )
+            lines_in_picking.with_context(store_skip_sync_rule=True).write(
                 {
                     "internal_picking_id": central_picking.id,
                     "store_receipt_picking_id": store_picking.id if store_picking != central_picking else False,
@@ -666,7 +719,7 @@ class MerPurchaseRequest(models.Model):
             created_pickings |= central_picking | store_picking
 
         if created_pickings:
-            self.state = "done" if self.is_replenishment_from_discrepancy else "po_created"
+            self.state = "po_created"
         return created_pickings
 
     def action_submit(self):
@@ -718,6 +771,14 @@ class MerPurchaseRequest(models.Model):
     def action_approve(self):
         self = self.with_context(store_current_action="action_approve")
         self._check_store_menu_action_allowed()
+        
+        # Bắt buộc gán số lượng duyệt = 0 cho các sản phẩm đã dừng đặt hàng
+        stopped_lines = self.line_ids.filtered(lambda l: l.product_id.x_mer_stop_ordering)
+        if stopped_lines:
+            stopped_lines.write({'approved_qty': 0.0})
+            stopped_names = ", ".join(stopped_lines.mapped('product_id.display_name'))
+            self.message_post(body=_("Lưu ý: Các sản phẩm sau đã bị dừng đặt hàng (Approved Qty = 0): %s") % stopped_names)
+            
         return super().action_approve()
 
     def action_reject(self):
@@ -824,7 +885,7 @@ class MerPurchaseRequest(models.Model):
             internal_lines.with_context(store_skip_sync_rule=True).write({"internal_flow_state": "pending_check"})
 
         if created_orders or internal_lines:
-            self.state = "done" if self.is_replenishment_from_discrepancy else "po_created"
+            self.state = "po_created"
 
         return {
             "type": "ir.actions.act_window",

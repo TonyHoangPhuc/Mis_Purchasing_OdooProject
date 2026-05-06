@@ -8,25 +8,54 @@ class StockMoveLine(models.Model):
     _inherit = "stock.move.line"
 
     def _compute_expiration_date(self):
-        super()._compute_expiration_date()
-        for line in self:
-            if (
-                line.picking_type_use_create_lots
-                and not line.lot_id
-                and line.product_id.use_expiration_date
-                and (line.product_id.expiration_time or 0) <= 0
-            ):
+        # Tách các dòng nhập hàng để xử lý riêng, bao gồm cả trường hợp trong wizard (check qua move_id hoặc context)
+        incoming_lines = self.filtered(
+            lambda l: (
+                l.picking_id.picking_type_code == "incoming" or 
+                (l.move_id and l.move_id.picking_id.picking_type_code == "incoming") or
+                self.env.context.get("default_picking_type_code") == "incoming" or
+                (l.location_id and l.location_id.usage == "supplier") or
+                (l.move_id and l.move_id.location_id.usage == "supplier")
+            )
+            and l.product_id.use_expiration_date
+            and not self._context.get("skip_expiry_check")
+        )
+        other_lines = self - incoming_lines
+
+        if other_lines:
+            super(StockMoveLine, other_lines)._compute_expiration_date()
+
+        for line in incoming_lines:
+            # Nếu đã có lot_id và lot đó có ngày hết hạn, thì lấy từ lot
+            if line.lot_id and line.lot_id.expiration_date:
+                line.expiration_date = line.lot_id.expiration_date
+            elif not line.expiration_date:
+                # Nếu là hàng mới nhập và chưa có ngày, để trống để bắt buộc nhập tay
                 line.expiration_date = False
 
     def _compute_removal_date(self):
-        super()._compute_removal_date()
-        for line in self:
-            if (
-                line.picking_type_use_create_lots
-                and not line.lot_id
-                and line.product_id.use_expiration_date
-                and (line.product_id.removal_time or 0) <= 0
-            ):
+        incoming_lines = self.filtered(
+            lambda l: (
+                l.picking_id.picking_type_code == "incoming" or 
+                (l.move_id and l.move_id.picking_id.picking_type_code == "incoming") or
+                self.env.context.get("default_picking_type_code") == "incoming" or
+                (l.location_id and l.location_id.usage == "supplier") or
+                (l.move_id and l.move_id.location_id.usage == "supplier")
+            )
+            and l.product_id.use_expiration_date
+            and not self._context.get("skip_expiry_check")
+        )
+        other_lines = self - incoming_lines
+
+        if other_lines:
+            super(StockMoveLine, other_lines)._compute_removal_date()
+
+        for line in incoming_lines:
+            if line.lot_id and line.lot_id.removal_date:
+                line.removal_date = line.lot_id.removal_date
+            elif line.expiration_date:
+                line.removal_date = line.expiration_date
+            elif not line.removal_date:
                 line.removal_date = False
 
     def _should_auto_generate_vendor_lot(self):
@@ -91,6 +120,11 @@ class StockMoveLine(models.Model):
         for key, mls in key_to_mls.items():
             lot = lots[key_to_index[key]].with_prefetch(lots._ids)
             mls.with_prefetch(self._prefetch_ids).write({"lot_id": lot.id})
+
+    @api.onchange("expiration_date")
+    def _onchange_expiration_date_sync_removal(self):
+        if self.expiration_date:
+            self.removal_date = self.expiration_date
 
     @api.model_create_multi
     def create(self, vals_list):

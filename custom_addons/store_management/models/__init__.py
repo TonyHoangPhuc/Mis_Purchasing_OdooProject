@@ -14,3 +14,4 @@ from . import store_vendor_bill
 from . import store_store
 from . import account_move
 from . import mer_promotion_line
+from . import mer_promotion
