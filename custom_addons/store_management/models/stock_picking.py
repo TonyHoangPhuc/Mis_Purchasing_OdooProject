@@ -636,9 +636,8 @@ class StockPicking(models.Model):
 
             if any(move.wm_damaged_qty > 0 for move in active_moves):
                 raise UserError(_("Phiếu có hàng hư hỏng. Vui lòng dùng nút Trả hàng NCC để từ chối toàn bộ lô hàng lỗi."))
-                continue
 
-            picking._ensure_tracked_products_have_lots_before_receipt()
+            picking._check_store_lot_and_expiry_validity()
 
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
@@ -1116,13 +1115,12 @@ class StockPicking(models.Model):
             actual_qty = move.quantity
             expected_qty = move._get_wm_expected_qty()
             if move.wm_damaged_qty > 0:
-                if float_compare(
-                    move.quantity,
-                    0.0,
-                    precision_rounding=move.product_uom.rounding or 0.01,
-                ):
-                    move.quantity = 0.0
-                continue
+                # Theo yêu cầu: Sản phẩm lỗi (từ NCC hay Kho tổng) đều trả hết mã đó và tạo báo cáo
+                move.quantity = 0.0
+                actual_qty = 0.0
+                for ml in move.move_line_ids:
+                    ml.quantity = 0.0
+                move.move_line_ids.unlink()
 
             comparison = float_compare(
                 actual_qty,
@@ -1130,6 +1128,11 @@ class StockPicking(models.Model):
                 precision_rounding=move.product_uom.rounding or 0.01,
             )
             if comparison < 0:
+                if move.wm_damaged_qty > 0:
+                    # Không tạo báo cáo thiếu hàng nếu sản phẩm đã bị lỗi (vì đã có báo cáo hàng lỗi thu hồi riêng)
+                    continue
+                
+                # Thiếu hàng: Tạo báo cáo thiếu hàng
                 has_shortage = True
                 report = self.env["mer.discrepancy.report"].search(
                     [
@@ -1151,14 +1154,45 @@ class StockPicking(models.Model):
                 }
                 if submit_shortage and not self._is_store_receipt_for_qc():
                     vals["submitted_to_merchandise"] = True
+                    vals["state"] = "reported"
                 if report:
                     report.write(vals)
                 else:
                     self.env["mer.discrepancy.report"].create(vals)
             elif comparison > 0:
                 has_overage = True
-                allow_excess_receipt = create_excess_report
-                if allow_excess_receipt:
+                allow_excess_report = create_excess_report
+                
+                # Phân biệt quy tắc xử lý hàng dư theo nguồn gốc
+                if self.store_route_type in ("supplier_to_store", "supplier_to_central"):
+                    # Từ Nhà cung cấp: Chỉ nhận đúng SL PR/PO. Không tạo báo cáo dư.
+                    excess_qty = actual_qty - expected_qty
+                    move.quantity = expected_qty
+                    allow_excess_report = False
+
+                    if excess_qty > 0:
+                        lines_without_lot = move.move_line_ids.filtered(lambda ml: not ml.lot_id and not ml.lot_name)
+                        for ml in lines_without_lot:
+                            if excess_qty <= 0:
+                                break
+                            qty_to_remove = min(ml.quantity, excess_qty)
+                            ml.quantity -= qty_to_remove
+                            excess_qty -= qty_to_remove
+                        
+                        if excess_qty > 0:
+                            for ml in reversed(move.move_line_ids):
+                                if excess_qty <= 0:
+                                    break
+                                qty_to_remove = min(ml.quantity, excess_qty)
+                                ml.quantity -= qty_to_remove
+                                excess_qty -= qty_to_remove
+                        
+                        move.move_line_ids.filtered(lambda ml: ml.quantity <= 0).unlink()
+                else:
+                    # Từ Kho tổng (central_to_store): Nhận hết SL thực tế và TẠO báo cáo dư hàng.
+                    allow_excess_report = True
+
+                if allow_excess_report:
                     report = self.env["mer.excess.receipt"].search(
                         [
                             ("picking_id", "=", self.id),
@@ -1314,6 +1348,7 @@ class StockPicking(models.Model):
             }
             if self._is_central_supplier_receipt():
                 vals["submitted_to_merchandise"] = True
+                vals["state"] = "reported"
             if report:
                 report.write(vals)
             else:
@@ -1363,24 +1398,6 @@ class StockPicking(models.Model):
             create_excess_report=True,
             shortage_note=_("Cửa hàng nhận thiếu hàng. Báo cáo đã được gửi Merchandise để tạo PR bù hàng."),
         )
-        damaged_product_ids = damaged_moves.mapped("product_id").ids
-        self.env["mer.discrepancy.report"].search([
-            ("picking_id", "=", self.id),
-            ("reason", "in", ["shortage", "overage"]),
-            ("product_id", "in", damaged_product_ids),
-            ("state", "!=", "cancel")
-        ]).write({
-            "state": "cancel",
-            "solution_notes": _("Báo cáo bị hủy do sản phẩm này đã được xử lý theo báo cáo hàng lỗi.")
-        })
-        self.env["mer.excess.receipt"].search([
-            ("picking_id", "=", self.id),
-            ("product_id", "in", damaged_product_ids),
-            ("state", "!=", "cancel")
-        ]).write({
-            "state": "cancel",
-            "notes": _("Phiếu bị hủy do sản phẩm này đã được xử lý theo báo cáo hàng lỗi.")
-        })
         if issue_type == "none":
             issue_type = "damaged_partial"
         self.write(
@@ -1421,6 +1438,44 @@ class StockPicking(models.Model):
         ).action_qc_pass()
         return return_picking
 
+    def _check_store_lot_and_expiry_validity(self):
+        self.ensure_one()
+        # Chỉ kiểm tra cho các luồng nhập từ nhà cung cấp (vào cửa hàng hoặc vào kho tổng)
+        if self.store_route_type not in ("supplier_to_store", "supplier_to_central"):
+            return
+
+        missing_lot_products = set()
+        missing_expiry_products = set()
+
+        for move in self.move_ids.filtered(lambda m: m.state != "cancel" and m.quantity > 0):
+            expected_qty = move._get_wm_expected_qty()
+            target_qty = 0.0 if move.wm_damaged_qty > 0 else min(move.quantity, expected_qty)
+
+            if target_qty <= 0:
+                continue
+
+            if move.product_id.tracking != "none":
+                valid_lot_qty = sum(
+                    ml.quantity for ml in move.move_line_ids 
+                    if ml.quantity > 0 and (ml.lot_id or ml.lot_name)
+                )
+                if valid_lot_qty < target_qty:
+                    missing_lot_products.add(move.product_id.display_name)
+
+            if move.product_id.use_expiration_date and move.product_id.tracking != "none":
+                valid_expiry_qty = sum(
+                    ml.quantity for ml in move.move_line_ids 
+                    if ml.quantity > 0 and ml.expiration_date
+                )
+                if valid_expiry_qty < target_qty:
+                    missing_expiry_products.add(move.product_id.display_name)
+
+        if missing_lot_products:
+            raise UserError(_("Vui lòng nhập số Lô/Seri cho đủ số lượng cần nhập (không tính hàng dư/lỗi) của: %s") % ", ".join(missing_lot_products))
+
+        if missing_expiry_products:
+            raise UserError(_("Vui lòng nhập Ngày hết hạn cho đủ số lượng cần nhập (không tính hàng dư/lỗi) của: %s") % ", ".join(missing_expiry_products))
+
     def action_return_central_damaged_receipt_to_supplier(self):
         for picking in self:
             if not picking._is_central_supplier_receipt():
@@ -1429,6 +1484,8 @@ class StockPicking(models.Model):
                 raise UserError(_("Phiếu này đã hoàn tất hoặc đã hủy, không thể trả hàng NCC."))
             if not picking.store_actual_check_done:
                 raise UserError(_("Cần hoàn tất bước Kiểm hàng thực tế trước khi trả hàng NCC."))
+
+            picking._check_store_lot_and_expiry_validity()
 
             active_moves = picking.move_ids.filtered(lambda current_move: current_move.state != "cancel")
             damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
@@ -1463,28 +1520,9 @@ class StockPicking(models.Model):
             picking.wm_qc_note = _("Có hàng hư hỏng tại Kho tổng. Hệ thống trả toàn bộ sản phẩm bị lỗi và chỉ nhập các sản phẩm không lỗi.")
             picking._adjust_po_quantities_to_actual()
             
-            # Hủy các báo cáo Thiếu/Dư đã tạo trước đó vì toàn bộ lô đã bị từ chối
-            damaged_product_ids = damaged_moves.mapped("product_id").ids
-            self.env["mer.discrepancy.report"].search([
-                ("picking_id", "=", picking.id),
-                ("reason", "in", ["shortage", "overage"]),
-                ("product_id", "in", damaged_product_ids),
-                ("state", "!=", "cancel")
-            ]).write({
-                "state": "cancel", 
-                "solution_notes": _("Báo cáo bị hủy do toàn bộ lô hàng đã bị từ chối vì có hàng hư hỏng.")
-            })
-            self.env["mer.excess.receipt"].search([
-                ("picking_id", "=", picking.id),
-                ("product_id", "in", damaged_product_ids),
-                ("state", "!=", "cancel")
-            ]).write({
-                "state": "cancel", 
-                "notes": _("Phiếu bị hủy do toàn bộ lô hàng đã bị từ chối vì có hàng hư hỏng.")
-            })
             picking.message_post(
                 body=_(
-                    "Đã tạo phiếu trả NCC <b>%s</b> cho toàn bộ lô hàng lỗi. Phiếu nhập gốc bị hủy, không cộng bất kỳ số lượng nào vào tồn kho Kho tổng."
+                    "Đã tạo phiếu trả NCC <b>%s</b> cho toàn bộ lô hàng lỗi. Các sản phẩm/số lượng đạt còn lại vẫn tiếp tục được nhập vào Kho tổng."
                 )
                 % return_picking.name,
                 subtype_xmlid="mail.mt_note",
@@ -1522,6 +1560,7 @@ class StockPicking(models.Model):
 
     def action_return_store_damaged_receipt_to_supplier(self):
         for picking in self:
+            picking._check_store_lot_and_expiry_validity()
             picking._return_store_damaged_receipt_to_supplier()
         self._sync_related_mer_request_state()
         return {
@@ -1546,12 +1585,15 @@ class StockPicking(models.Model):
             if not active_moves:
                 raise UserError(_("Phiếu không có dòng hàng hợp lệ để xác nhận."))
 
+            if picking.store_route_type == "supplier_to_store":
+                picking._check_store_lot_and_expiry_validity()
+
             damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
             if damaged_moves:
                 picking._return_store_damaged_receipt_to_supplier()
                 continue
 
-            picking._ensure_tracked_products_have_lots_before_receipt()
+
 
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
