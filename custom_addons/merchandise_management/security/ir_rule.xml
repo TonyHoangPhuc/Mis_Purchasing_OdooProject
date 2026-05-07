@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="rule_mer_purchase_request_merchandise_no_draft" model="ir.rule">
+        <field name="name">Merchandise: Không hiện PR dạng nháp</field>
+        <field name="model_id" ref="merchandise_management.model_mer_purchase_request"/>
+        <field name="domain_force">['|', ('state', '!=', 'draft'), ('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('merchandise_management.group_merchandise_user')), (4, ref('merchandise_management.group_merchandise_manager'))]"/>
+    </record>
+    <record id="rule_mer_purchase_request_admin" model="ir.rule">
+        <field name="name">Admin: Toàn quyền xem PR</field>
+        <field name="model_id" ref="merchandise_management.model_mer_purchase_request"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_erp_manager'))]"/>
+    </record>
+
+</odoo>

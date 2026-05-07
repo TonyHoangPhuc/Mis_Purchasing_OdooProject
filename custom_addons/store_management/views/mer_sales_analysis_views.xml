@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sale_order_line_mer_pivot" model="ir.ui.view">
+        <field name="name">sale.order.line.mer.pivot</field>
+        <field name="model">sale.order.line</field>
+        <field name="arch" type="xml">
+            <pivot string="Phân tích Doanh số &amp; Lợi nhuận" sample="1">
+                <field name="product_id" type="row"/>
+                <field name="order_id" type="col"/>
+                <field name="price_subtotal" type="measure" string="Doanh thu"/>
+                <field name="x_mer_margin" type="measure" string="Lợi nhuận gộp"/>
+                <field name="x_mer_margin_percent" type="measure" string="Tỷ suất LN (%)"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="action_mer_sales_analysis" model="ir.actions.act_window">
+        <field name="name">Phân tích Doanh số Merchandise</field>
+        <field name="res_model">sale.order.line</field>
+        <field name="view_mode">pivot,list</field>
+        <field name="view_id" ref="view_sale_order_line_mer_pivot"/>
+        <field name="context">{'search_default_confirmed': 1}</field>
+        <field name="domain">[('state', 'in', ('sale', 'done'))]</field>
+    </record>
+
+    <record id="menu_mer_sales_analysis" model="ir.ui.menu">
+        <field name="name">Báo cáo Doanh số</field>
+        <field name="parent_id" ref="merchandise_management.menu_merchandise_root"/>
+        <field name="action" ref="action_mer_sales_analysis"/>
+        <field name="sequence" eval="50"/>
+    </record>
+</odoo>

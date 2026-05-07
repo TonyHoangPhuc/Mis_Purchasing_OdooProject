@@ -1,0 +1,579 @@
+import base64
+import io
+
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
+
+from odoo import models, fields, api, _, Command
+from odoo.exceptions import UserError
+from datetime import timedelta
+
+# Quản lý chương trình khuyến mãi và tự động cập nhật giá
+class MerPromotion(models.Model):
+    _name = 'mer.promotion'
+    _description = 'Kế hoạch khuyến mãi Merchandise'
+    _inherit = ['mail.thread', 'mail.activity.mixin']
+
+    name = fields.Char(string='Tên chương trình', required=False)
+    code = fields.Char(string='Mã khuyến mãi', required=True, readonly=True, copy=False, default=lambda self: _('New'))
+    
+    state = fields.Selection([
+        ('draft', 'Mới'),
+        ('active', 'Đang chạy'),
+        ('expired', 'Hết hạn')
+    ], string='Trạng thái', default='draft', tracking=True)
+    
+    date_start = fields.Date(string='Ngày bắt đầu', default=lambda self: fields.Date.context_today(self), required=True)
+    date_end = fields.Date(string='Ngày kết thúc')
+    
+    description = fields.Text(string='Mô tả chi tiết')
+    
+    line_ids = fields.One2many('mer.promotion.line', 'promotion_id', string='Chi tiết sản phẩm')
+    product_ids = fields.Many2many('product.product', string='Sản phẩm áp dụng', compute='_compute_product_ids', store=True) # Giữ để tương thích logic cũ
+    
+    # Các trường mở rộng Merchandise
+    target_store_ids = fields.Many2many('stock.warehouse', string='Cửa hàng áp dụng')
+    
+    # Hiển thị lot_ids từ lines
+    def _compute_product_ids(self):
+        for rec in self:
+            rec.product_ids = rec.line_ids.mapped('product_id')
+
+    @api.onchange('target_store_ids')
+    def _onchange_target_store_ids(self):
+        """Khi bỏ cửa hàng, xóa các lines và lots tương ứng của cửa hàng đó."""
+        if not self.target_store_ids:
+            self.line_ids = [(5, 0, 0)]
+            self.lot_ids = [(5, 0, 0)]
+            return
+
+        # 1. Dọn dẹp Lines: Chỉ giữ lại lines thuộc cửa hàng đang chọn
+        valid_wh_ids = self.target_store_ids.ids
+        lines_to_remove = self.line_ids.filtered(lambda l: l.warehouse_id.id not in valid_wh_ids)
+        if lines_to_remove:
+            self.line_ids = [(3, line.id) for line in lines_to_remove]
+
+        # 2. Dọn dẹp Lots: Chỉ giữ lại lots còn tồn tại ở các cửa hàng đang chọn
+        if self.is_expiry_promo and self.lot_ids:
+            store_locations = self.target_store_ids.mapped('lot_stock_id')
+            quants = self.env['stock.quant'].search([
+                ('lot_id', 'in', self.lot_ids.ids),
+                ('location_id', 'child_of', store_locations.ids),
+                ('quantity', '>', 0)
+            ])
+            valid_lot_ids = quants.mapped('lot_id').ids
+            self.lot_ids = [(6, 0, valid_lot_ids)]
+
+    # Trường bổ sung cho KM hàng sắp hết hạn
+    is_expiry_promo = fields.Boolean(string='KM Hàng sắp hết hạn', default=False)
+    
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            if vals.get('code', _('New')) == _('New'):
+                vals['code'] = self.env['ir.sequence'].next_by_code('mer.promotion') or _('New')
+        return super(MerPromotion, self).create(vals_list)
+    
+    lot_id = fields.Many2one('stock.lot', string='Lô hàng áp dụng')
+    lot_ids = fields.Many2many('stock.lot', string='Danh sách lô hàng áp dụng')
+
+
+
+    # Tính năng thủ công: Quét lô hàng cận hạn vào chương trình hiện tại
+    def action_fetch_expiry_lots(self):
+        self.ensure_one()
+        if self.state != 'draft':
+            raise UserError(_("Chỉ có thể lấy thêm hàng khi chương trình đang ở trạng thái Nháp."))
+            
+        today = fields.Date.today()
+        # 1. Xác định chính xác các Kho là Cửa hàng
+        store_warehouses = self.env['stock.warehouse'].search([('mis_role', '=', 'store')])
+        store_locations = store_warehouses.mapped('lot_stock_id')
+        
+        # 2. Chỉ quét tồn kho thực tế nằm tại các Địa điểm chính cửa hàng (ví dụ: 1/Stock)
+        store_quants = self.env['stock.quant'].search([
+            ('quantity', '>', 0),
+            ('location_id', 'child_of', store_locations.ids),
+            ('lot_id', '!=', False),
+            ('lot_id.expiration_date', '>', today),
+            ('lot_id.expiration_date', '<=', today + timedelta(days=90))
+        ])
+
+        lots_in_stores = store_quants.mapped('lot_id')
+        
+        valid_lots = lots_in_stores.filtered(
+            lambda l: l.expiration_date and fields.Date.to_date(l.expiration_date) <= today + timedelta(days=l.product_id.x_mer_expiry_days or 30)
+        )
+        
+        if not valid_lots:
+            raise UserError(_("Không tìm thấy lô hàng nào sắp hết hạn trong kho."))
+
+        # 3. Gom nhóm SL theo Sản phẩm + Cửa hàng và theo dõi các Lô đóng góp
+        # key: (product_id, warehouse_id)
+        product_wh_qtys = {}
+        product_wh_lots = {} # Để biết lô nào thuộc kho nào cho SP nào
+        
+        for lot in valid_lots:
+            lot_quants = store_quants.filtered(lambda q: q.lot_id == lot)
+            for q in lot_quants:
+                wh = q.location_id.warehouse_id
+                if wh:
+                    key = (lot.product_id.id, wh.id)
+                    product_wh_qtys[key] = product_wh_qtys.get(key, 0.0) + q.quantity
+                    if key not in product_wh_lots:
+                        product_wh_lots[key] = set()
+                    product_wh_lots[key].add(lot.id)
+
+        # 4. Trừ đi số lượng đang chạy ở các KM khác (để tránh trùng lặp)
+        active_promos = self.env['mer.promotion'].search([
+            ('state', '=', 'active'),
+            ('id', '!=', self.id)
+        ])
+        active_lines = active_promos.mapped('line_ids')
+
+        # 5. Gom dữ liệu để cập nhật 1 lần duy nhất (Tránh trigger onchange nhiều lần)
+        new_description = self.description or ''
+        if "--- Cập nhật:" in new_description:
+            new_description = new_description.split("--- Cập nhật:")[0].strip()
+
+        # Chuẩn bị line_vals
+        final_line_vals = []
+        
+        # Lấy danh sách lines hiện có để map (Tránh tạo mới nếu đã có)
+        existing_lines_map = {}
+        for line in self.line_ids:
+            key = (line.product_id.id, line.warehouse_id.id)
+            if key not in existing_lines_map:
+                existing_lines_map[key] = line
+            else:
+                final_line_vals.append((2, line.id))
+
+        current_keys = set()
+        final_wh_ids = set()
+        final_lot_ids = set()
+
+        for (p_id, wh_id), qty in product_wh_qtys.items():
+            # Tính tổng SL đã bị chiếm bởi các KM khác:
+            # - Trừ "Còn lại" của các KM đang chạy (Active)
+            # - Trừ "Đang đặt" của TẤT CẢ KM (kể cả đã kết thúc nhưng hàng chưa rời kho)
+            other_promos = self.env['mer.promotion'].search([('id', '!=', self.id)])
+            other_lines = other_promos.mapped('line_ids').filtered(
+                lambda l: l.product_id.id == p_id and l.warehouse_id.id == wh_id
+            )
+            other_taken_qty = 0.0
+            for ol in other_lines:
+                if ol.promotion_id.state == 'active':
+                    other_taken_qty += ol.remaining_qty + ol.reserved_qty
+                else:
+                    other_taken_qty += ol.reserved_qty
+            
+            actual_fetch_qty = qty - other_taken_qty
+            if actual_fetch_qty <= 0:
+                continue
+
+            key = (p_id, wh_id)
+            current_keys.add(key)
+            final_wh_ids.add(wh_id)
+            final_lot_ids.update(product_wh_lots.get(key, set()))
+
+            if key in existing_lines_map:
+                line = existing_lines_map[key]
+                final_line_vals.append((1, line.id, {
+                    'limit_qty': actual_fetch_qty,
+                    'discount_rate': 0.0 if line.discount_rate == 0 else line.discount_rate
+                }))
+            else:
+                final_line_vals.append((0, 0, {
+                    'product_id': p_id,
+                    'warehouse_id': wh_id,
+                    'discount_rate': 0.0,
+                    'limit_qty': actual_fetch_qty
+                }))
+
+        for key, line in existing_lines_map.items():
+            if key not in current_keys:
+                final_line_vals.append((2, line.id))
+        
+        # 6. Ghi đè toàn bộ trong 1 transaction
+        write_vals = {
+            'is_expiry_promo': True,
+            'lot_ids': [(6, 0, list(final_lot_ids))],
+            'target_store_ids': [(6, 0, list(final_wh_ids))],
+        }
+        if final_line_vals:
+            write_vals['line_ids'] = final_line_vals
+            
+        self.write(write_vals)
+
+        # 7. Cập nhật mô tả (Sau khi đã có data mới)
+        total_qty_actual = sum(self.line_ids.mapped('qty_in_stores'))
+        product_details = "\n".join([_(" • %s [%s]: %s") % (l.product_id.name, l.warehouse_id.name, l.qty_in_stores) for l in self.line_ids if l.qty_in_stores > 0])
+        msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s.\n%s") % (
+            len(final_lot_ids), total_qty_actual, product_details
+        )
+        self.write({'description': (new_description + "\n" + msg).strip()})
+
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'reload',
+        }
+
+    # Kiểm tra ngày bắt đầu/kết thúc
+    @api.constrains('date_start', 'date_end')
+    def _check_dates(self):
+        for record in self:
+            if record.date_start and record.date_end and record.date_start > record.date_end:
+                raise UserError(_("Ngày bắt đầu không thể sau ngày kết thúc."))
+
+    # Cập nhật giá sản phẩm thông minh (Batch & Best Price)
+    @api.model
+    def _update_product_prices(self, products=None):
+        today = fields.Date.context_today(self)
+        
+        # 1. Tìm tất cả KM đang chạy (có hiệu lực)
+        active_promotions = self.search([
+            ('state', '=', 'active'),
+            ('date_start', '<=', today),
+            '|', ('date_end', '>=', today), ('date_end', '=', False)
+        ])
+        
+        # 2. Tính toán mức giá KM thấp nhất cho mỗi sản phẩm từ TẤT CẢ các KM đang active
+        promo_data = {}
+        for promo in active_promotions:
+            for line in promo.line_ids:
+                if not line.product_id:
+                    continue
+                if line.limit_qty > 0 and (line.limit_qty - line.sold_qty) <= 0:
+                    continue
+                price = line.product_id.lst_price * (1 - (line.discount_rate / 100.0))
+                if line.product_id.id not in promo_data or price < promo_data[line.product_id.id]['price']:
+                    promo_data[line.product_id.id] = {'price': price, 'line_id': line.id}
+        
+        # 3. Xác định danh sách sản phẩm cần cập nhật
+        # Nếu không truyền vào products, chúng ta sẽ quét toàn bộ sản phẩm đang có giá KM để reset nếu cần
+        if products is None:
+            products = self.env['product.product'].search(['|', ('current_promotion_price', '>', 0), ('id', 'in', list(promo_data.keys()))])
+
+        # 4. Ghi đè giá KM mới và liên kết dòng KM
+        for product in products:
+            new_data = promo_data.get(product.id, {'price': 0.0, 'line_id': False})
+            new_price, new_line_id = new_data['price'], new_data['line_id']
+            if product.current_promotion_price != new_price or product.current_promotion_line_id.id != new_line_id:
+                product.write({
+                    'current_promotion_price': new_price,
+                    'current_promotion_line_id': new_line_id
+                })
+
+    # Scheduler định kỳ cập nhật KM
+    @api.model
+    def _run_promotion_scheduler(self):
+        today = fields.Date.context_today(self)
+        
+        # 1. Tự động chuyển các KM quá hạn sang Expired
+        expired_promos = self.search([
+            ('state', '=', 'active'),
+            ('date_end', '<', today)
+        ])
+        if expired_promos:
+            expired_promos.write({'state': 'expired'})
+
+        # 3. Quét tạo mới KM hàng cận hạn
+        self._generate_expiry_promotions()
+
+        # 4. Cập nhật lại toàn bộ bảng giá sản phẩm
+        self._update_product_prices()
+
+    def action_run_scheduler_manually(self):
+        """Hàm cho phép admin chạy quét thủ công từ giao diện"""
+        self._run_promotion_scheduler()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Thành công',
+                'message': 'Đã hoàn thành quét hàng cận date toàn hệ thống!',
+                'sticky': False,
+                'type': 'success',
+                'next': {'type': 'ir.actions.client', 'tag': 'reload'},
+            }
+        }
+
+    # Logic tự động tạo KM cho hàng sắp hết hạn (Gộp theo đợt)
+    @api.model
+    def _generate_expiry_promotions(self):
+        today = fields.Date.today()
+        from odoo.tools import float_compare
+        
+        # 1. Xác định các Kho Cửa hàng và Địa điểm chính
+        store_warehouses = self.env['stock.warehouse'].search([('mis_role', '=', 'store')])
+        store_locations = store_warehouses.mapped('lot_stock_id')
+        
+        # 2. Tìm quants nội bộ có lot sắp hết hạn thuộc các Địa điểm cửa hàng
+        store_quants = self.env['stock.quant'].search([
+            ('quantity', '>', 0),
+            ('location_id', 'child_of', store_locations.ids),
+            ('lot_id', '!=', False),
+            ('lot_id.expiration_date', '>', today),
+            ('lot_id.expiration_date', '<=', today + timedelta(days=90))
+        ])
+        
+        # 3. Gom nhóm theo SP + Kho và lọc theo cấu hình từng SP
+        product_wh_qtys = {}
+        all_lot_ids = set()
+        
+        for quant in store_quants:
+            lot = quant.lot_id
+            expiry_days = lot.product_id.x_mer_expiry_days or 30
+            lot_date = fields.Date.to_date(lot.expiration_date)
+            
+            if not lot_date or lot_date > today + timedelta(days=expiry_days):
+                continue
+
+            # Kiểm tra xem lô này đã có trong KM nào (Draft/Active) chưa
+            dup_domain = [
+                ('state', 'in', ['draft', 'active']),
+                '|', ('lot_id', '=', lot.id), ('lot_ids', 'in', [lot.id])
+            ]
+            if self.search_count(dup_domain):
+                continue
+
+            warehouse = quant.location_id.warehouse_id
+            if not warehouse:
+                continue
+
+            key = (lot.product_id.id, warehouse.id)
+            product_wh_qtys[key] = product_wh_qtys.get(key, 0.0) + quant.quantity
+            all_lot_ids.add(lot.id)
+
+        if not product_wh_qtys:
+            return
+
+        # 4. Trừ đi số lượng đang chạy ở các KM khác
+        active_promos = self.env['mer.promotion'].search([('state', '=', 'active')])
+        active_lines = active_promos.mapped('line_ids')
+
+        line_vals = []
+        final_warehouse_ids = set()
+        final_lot_ids = set()
+
+        for (p_id, wh_id), qty in product_wh_qtys.items():
+            # Tính tổng SL đã bị chiếm bởi các KM khác:
+            other_promos = self.env['mer.promotion'].search([])
+            other_lines = other_promos.mapped('line_ids').filtered(
+                lambda l: l.product_id.id == p_id and l.warehouse_id.id == wh_id
+            )
+            other_taken_qty = 0.0
+            for ol in other_lines:
+                if ol.promotion_id.state == 'active':
+                    other_taken_qty += ol.remaining_qty + ol.reserved_qty
+                else:
+                    other_taken_qty += ol.reserved_qty
+            
+            actual_fetch_qty = qty - other_taken_qty
+            if float_compare(actual_fetch_qty, 0.0, precision_digits=2) <= 0:
+                continue
+
+            line_vals.append((0, 0, {
+                'product_id': p_id,
+                'warehouse_id': wh_id,
+                'discount_rate': 0.0,
+                'limit_qty': actual_fetch_qty
+            }))
+            final_warehouse_ids.add(wh_id)
+            # Tìm các lô thuộc SP + Kho này để gán vào đầu mục KM
+            relevant_lots = store_quants.filtered(
+                lambda q: q.product_id.id == p_id and q.location_id.warehouse_id.id == wh_id and q.lot_id.id in all_lot_ids
+            ).mapped('lot_id')
+            final_lot_ids.update(relevant_lots.ids)
+
+        if line_vals:
+            # Tạo 1 đợt khuyến mãi tổng hợp
+            promo_name = _("KM Hàng cận hạn - %s") % today.strftime('%d/%m/%Y')
+            new_promo = self.create({
+                'name': promo_name,
+                'code': "EXP-%s" % today.strftime('%Y%m%d%H%M'), 
+                'is_expiry_promo': True,
+                'target_store_ids': [(6, 0, list(final_warehouse_ids))],
+                'lot_ids': [(6, 0, list(final_lot_ids))],
+                'line_ids': line_vals,
+                'date_start': today,
+            })
+            
+            # Cập nhật mô tả
+            total_qty_actual = sum(new_promo.line_ids.mapped('qty_in_stores'))
+            product_details = "\n".join([
+                _(" • %s [%s]: %s") % (l.product_id.name, l.warehouse_id.name, l.qty_in_stores) 
+                for l in new_promo.line_ids if l.qty_in_stores > 0
+            ])
+            msg = _("--- Tự động: Tìm thấy %s lô hàng cận hạn khả dụng với tổng tồn %s.\n%s") % (
+                len(final_lot_ids), total_qty_actual, product_details
+            )
+            new_promo.write({'description': msg})
+
+    # Chỉ cho phép xóa khi chưa kích hoạt
+    def unlink(self):
+        for record in self:
+            if record.state == 'active':
+                raise UserError(_("Không thể xóa: Chương trình '%s' đang ở trạng thái 'Đang chạy'. Bạn phải kết thúc nó trước.") % record.name)
+        return super(MerPromotion, self).unlink()
+
+    # Kích hoạt chương trình và gửi thông báo
+    def action_activate(self):
+        for promotion in self:
+            if not promotion.name:
+                raise UserError(_("Vui lòng nhập Tên chương trình trước khi kích hoạt."))
+            if not promotion.code:
+                raise UserError(_("Vui lòng nhập Mã khuyến mãi trước khi kích hoạt."))
+            if not promotion.line_ids:
+                raise UserError(_("Vui lòng thêm ít nhất một sản phẩm!"))
+            
+            # Kiểm tra mức giảm giá và số lượng tối đa của từng sản phẩm
+            for line in promotion.line_ids:
+                if line.discount_rate <= 0:
+                    raise UserError(_("Vui lòng điền mức giảm giá cho sản phẩm '%s'.") % line.product_id.name)
+                if line.limit_qty <= 0:
+                    raise UserError(_("Vui lòng điền 'SL KM Tối đa' lớn hơn 0 cho sản phẩm '%s' tại cửa hàng '%s'.") % (line.product_id.name, line.warehouse_id.name or ''))
+            if not promotion.target_store_ids:
+                raise UserError(_("Vui lòng chọn ít nhất một Cửa hàng áp dụng!"))
+            
+            # Kiểm tra logic ngày tháng ngay tại đây
+            if not promotion.date_end:
+                raise UserError(_("Vui lòng điền Ngày kết thúc trước khi kích hoạt chương trình."))
+            if promotion.date_start and promotion.date_start > promotion.date_end:
+                raise UserError(_("Lỗi ngày tháng: Ngày bắt đầu (%s) không thể sau ngày kết thúc (%s).") % (promotion.date_start, promotion.date_end))
+
+            # Kiểm tra tồn kho chi tiết từng cửa hàng trước khi kích hoạt
+            error_details = []
+            for line in promotion.line_ids:
+                if line.warehouse_id not in promotion.target_store_ids:
+                    error_details.append(
+                        _("- Sản phẩm '%s' đang gán cửa hàng ngoài phạm vi áp dụng: '%s'") % (
+                            line.product_id.name,
+                            line.warehouse_id.name or _('Chưa chọn'),
+                        )
+                    )
+                    continue
+
+                # Kiểm tra đúng tồn kho của cửa hàng đang gán trên từng dòng
+                product_with_context = line.product_id.with_context(location=line.warehouse_id.lot_stock_id.id)
+                store_qty = product_with_context.qty_available
+
+                if store_qty <= 0:
+                    error_details.append(
+                        _("- Sản phẩm '%s' tại cửa hàng '%s'") % (line.product_id.name, line.warehouse_id.name)
+                    )
+            
+            if error_details:
+                error_msg = "\n".join(error_details)
+                raise UserError(_("Không thể kích hoạt vì các sản phẩm sau đang hết hàng tại cửa hàng tương ứng:\n%s\n\nVui lòng nhập thêm hàng hoặc bỏ cửa hàng/sản phẩm này ra khỏi danh sách.") % error_msg)
+
+            promotion.write({'state': 'active'})
+            # Cập nhật giá sản phẩm ngay lập tức
+            products = promotion.line_ids.mapped('product_id')
+            self._update_product_prices(products=products)
+
+    def _all_limited_lines_exhausted(self):
+        self.ensure_one()
+        limited_lines = self.line_ids.filtered(lambda line: line.limit_qty > 0)
+        return bool(limited_lines) and all((line.limit_qty - line.sold_qty) <= 0 for line in limited_lines)
+
+    def _check_and_expire(self):
+        """Kết thúc chương trình khi tất cả các dòng có giới hạn đã hết số lượng."""
+        for promotion in self:
+            if promotion.state != 'active':
+                continue
+
+            if promotion._all_limited_lines_exhausted():
+                promotion.action_expire()
+            
+            # Gửi thông báo
+            if promotion.state == 'active': # Chỉ gửi nếu chưa bị chuyển sang expired ngay
+                store_partners = promotion.target_store_ids.mapped('partner_id')
+                if store_partners:
+                    promotion.message_subscribe(partner_ids=store_partners.ids)
+                    
+                    # Sử dụng Markup để render HTML
+                    from markupsafe import Markup
+                    
+                    # Tạo danh sách sản phẩm và mức giảm để hiện trong thông báo
+                    line_details = Markup("").join([
+                        Markup("<li>• %s: <span style='color: #16a34a; font-weight: bold;'>%s%%</span></li>") % (line.product_id.name, line.discount_rate)
+                        for line in promotion.line_ids
+                    ])
+
+                    content = Markup(
+                        "<div style='background-color: #f0fdf4; border-left: 5px solid #22c55e; padding: 15px; border-radius: 4px; font-family: sans-serif;'>"
+                            "<h3 style='margin-top: 0; color: #166534; border-bottom: 1px solid #bbf7d0; padding-bottom: 8px;'>📢 %s</h3>"
+                            "<ul style='list-style: none; padding: 0; margin: 10px 0; color: #15803d; line-height: 1.6;'>"
+                                "<li><b>🏷️ %s:</b> %s</li>"
+                                "<li><b>🔢 %s:</b> %s</li>"
+                                "<li><b>📦 %s:</b> %s sản phẩm</li>"
+                                "<li><b>📅 %s:</b> Từ <span style='font-weight: bold;'>%s</span> đến <span style='font-weight: bold;'>%s</span></li>"
+                            "</ul>"
+                            "<div style='margin-top: 10px; color: #15803d;'>"
+                                "<b>📉 Chi tiết mức giảm:</b>"
+                                "<ul style='margin-top: 5px; padding-left: 15px; list-style: none;'>%s</ul>"
+                            "</div>"
+                            "<p style='margin-bottom: 0; font-style: italic; color: #166534; font-size: 0.9em; border-top: 1px dashed #bbf7d0; pt: 8px;'>"
+                                "💡 <i>%s</i>"
+                            "</p>"
+                        "</div>"
+                    ) % (
+                        _("THÔNG BÁO KHUYẾN MÃI MỚI"),
+                        _("Tên chương trình"), promotion.name,
+                        _("Mã KM"), promotion.code or '---',
+                        _("Số lượng"), len(promotion.line_ids),
+                        _("Thời hạn"), promotion.date_start, promotion.date_end or _('Không thời hạn'),
+                        line_details,
+                        _("Lưu ý: Hệ thống sẽ tự động cập nhật giá mới cho các sản phẩm liên quan vào đúng ngày bắt đầu. Vui lòng các Cửa hàng kiểm tra!")
+                    )
+                    promotion.message_post(body=content, partner_ids=store_partners.ids)
+
+    # Kết thúc sớm chương trình KM
+    def action_expire(self):
+        for record in self:
+            # Lấy danh sách sản phẩm trước khi chuyển trạng thái
+            products = record.line_ids.mapped('product_id')
+            record.write({'state': 'expired'})
+            
+            # Ép giá về 0 ngay lập tức cho các sản phẩm trong chương trình này
+            if products:
+                products.write({
+                    'current_promotion_price': 0.0,
+                    'current_promotion_line_id': False
+                })
+                # Sau đó mới gọi update để tìm KM khác tốt nhất còn hiệu lực (nếu có)
+                self._update_product_prices(products=products)
+class MerPromotionLineLegacy(models.Model):
+    _register = False
+    _name = 'mer.promotion.line.legacy'
+    _description = 'Chi tiết dòng Khuyến mãi'
+
+    promotion_id = fields.Many2one('mer.promotion', string='Chương trình KM', ondelete='cascade')
+    product_id = fields.Many2one('product.product', string='Sản phẩm', required=True)
+    discount_rate = fields.Float(string='Mức giảm (%)')
+    
+    # Cột quan trọng: Tính toán tồn kho dựa trên Warehouse của chương trình
+    qty_in_stores = fields.Float(string='Tồn tại Cửa hàng', compute='_compute_qty_in_stores')
+    
+    # Đồng bộ thông tin cơ bản của SP
+    default_code = fields.Char(related='product_id.default_code', string='Mã SKU')
+    lst_price = fields.Float(related='product_id.lst_price', string='Giá gốc')
+
+    @api.depends('product_id', 'promotion_id.target_store_ids')
+    def _compute_qty_in_stores(self):
+        for line in self:
+            warehouses = line.promotion_id.target_store_ids
+            if not warehouses:
+                line.qty_in_stores = 0.0
+                continue
+            
+            # Quét tồn kho thực tế chỉ trong các Kho được áp dụng
+            quants = self.env['stock.quant'].search([
+                ('product_id', '=', line.product_id.id),
+                ('location_id.warehouse_id', 'in', warehouses.ids),
+                ('quantity', '>', 0)
+            ])
+            line.qty_in_stores = sum(quants.mapped('quantity'))

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_merchandise_root"
+              name="Merchandise"
+              web_icon="purchase,static/description/icon.png"
+              groups="merchandise_management.group_merchandise_user"
+              sequence="10"/>
+
+    <menuitem id="purchase.menu_purchase_root" active="False"/>
+
+    <menuitem id="menu_merchandise_requests"
+              name="Yêu cầu PR"
+              parent="menu_merchandise_root"
+              sequence="10"/>
+
+    <menuitem id="menu_merchandise_discrepancy"
+              name="Báo cáo sai lệch"
+              parent="menu_merchandise_root"
+              groups="merchandise_management.group_merchandise_user"
+              sequence="20"/>
+</odoo>
