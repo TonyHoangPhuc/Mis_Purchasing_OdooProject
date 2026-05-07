@@ -477,6 +477,10 @@ class MerPurchaseRequest(models.Model):
 
     def _is_line_logistically_completed(self, line):
         self.ensure_one()
+        # Một dòng PR coi là hoàn tất khi:
+        # 1. Phiếu kho đã hoàn tất (done)
+        # 2. Hoặc phiếu kho đã bị từ chối/hủy (rejected/cancel) - nghĩa là lô hàng đã được xử lý xong (dù lỗi)
+        
         if line.fulfillment_method == "supplier":
             if not line.purchase_order_id:
                 return False
@@ -484,42 +488,23 @@ class MerPurchaseRequest(models.Model):
                 lambda picking: picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id == line.request_warehouse_id
             )
-            # Chỉ coi là xong khi đã nhận hàng thành công (done)
-            return bool(receipt_pickings.filtered(lambda p: p.state == "done"))
-
-        resolved_discrepancy_report = bool(
-            line.store_receipt_picking_id
-            and self.env["mer.discrepancy.report"].search(
-                [
-                    ("picking_id", "=", line.store_receipt_picking_id.id),
-                    ("product_id", "=", line.product_id.id),
-                    ("reason", "in", ["damaged", "shortage"]),
-                    ("replenishment_request_id", "!=", False),
-                    ("state", "!=", "cancel"),
-                ],
-                limit=1,
-            )
-        )
-
-        if line.fulfillment_method == "supplier":
-            receipt_pickings = line.purchase_order_id.picking_ids.filtered(
-                lambda picking: picking.picking_type_code == "incoming"
-                and picking.picking_type_id.warehouse_id == line.request_warehouse_id
-            )
-            return bool(receipt_pickings.filtered(lambda p: p.state == "done"))
+            return bool(receipt_pickings.filtered(lambda p: p.state == "done" or p.wm_qc_status == "rejected" or p.state == "cancel"))
 
         if line.fulfillment_method == "supplier_central":
-            # Hoàn tất ngay khi Kho tổng nhận xong hàng từ NCC
+            # Hoàn tất khi Kho tổng nhận xong hàng từ NCC (kể cả nhận lỗi)
             receipt_pickings = line.purchase_order_id.picking_ids.filtered(
                 lambda picking: picking.picking_type_code == "incoming"
                 and picking.picking_type_id.warehouse_id
                 and getattr(picking.picking_type_id.warehouse_id, "mis_role", False) == "central"
             )
-            return bool(receipt_pickings.filtered(lambda p: p.state == "done"))
+            return bool(receipt_pickings.filtered(lambda p: p.state == "done" or p.wm_qc_status == "rejected" or p.state == "cancel"))
 
         if line.fulfillment_method == "internal":
-            # Hoàn tất khi Cửa hàng nhận xong hàng
-            return line.internal_flow_state == "delivered" or (line.store_receipt_picking_id and line.store_receipt_picking_id.state == "done")
+            # Hoàn tất khi Cửa hàng nhận xong hàng (kể cả nhận lỗi)
+            return (
+                line.internal_flow_state == "delivered" 
+                or (line.store_receipt_picking_id and (line.store_receipt_picking_id.state == "done" or line.store_receipt_picking_id.wm_qc_status == "rejected" or line.store_receipt_picking_id.state == "cancel"))
+            )
 
         return False
 

@@ -1378,10 +1378,13 @@ class StockPicking(models.Model):
 
         active_moves = self.move_ids.filtered(lambda current_move: current_move.state != "cancel")
         damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
-        damaged_moves._validate_wm_damaged_qty_not_over_received()
-        if not damaged_moves:
-            raise UserError(_("Chưa ghi nhận số lượng hư hỏng. Nếu hàng đạt, hãy dùng nút Xác nhận nhập hàng vào kho."))
+        
+        # Kiểm tra nếu không có hư hỏng VÀ cũng không có sai lệch thiếu/dư thì mới báo lỗi
+        if not damaged_moves and not self.store_receipt_has_discrepancy:
+            raise UserError(_("Chưa ghi nhận số lượng hư hỏng hoặc sai lệch. Nếu hàng đạt hoàn hảo, hãy dùng nút Xác nhận nhập hàng vào kho."))
 
+        damaged_moves._validate_wm_damaged_qty_not_over_received()
+        
         missing_note_moves = damaged_moves.filtered(lambda move: not move.wm_damage_note)
         if missing_note_moves:
             raise UserError(
@@ -1389,23 +1392,28 @@ class StockPicking(models.Model):
                 % ", ".join(missing_note_moves.mapped("product_id.display_name"))
             )
 
-        self._create_store_receipt_damaged_reports()
-        if self._is_store_receipt_from_central():
-            return_picking = self._create_store_central_damaged_return_picking()
-            message = _(
-                "Đã tạo phiếu trả phần hàng lỗi về Kho tổng <b>%s</b>. Hệ thống vẫn tiếp tục nhập các sản phẩm/số lượng đạt vào kho Cửa hàng."
-            ) % return_picking.name
+        return_picking = self.env['stock.picking']
+        if damaged_moves:
+            self._create_store_receipt_damaged_reports()
+            if self._is_store_receipt_from_central():
+                return_picking = self._create_store_central_damaged_return_picking()
+                message = _(
+                    "Đã tạo phiếu trả phần hàng lỗi về Kho tổng <b>%s</b>. Hệ thống vẫn tiếp tục nhập các sản phẩm/số lượng đạt vào kho Cửa hàng."
+                ) % return_picking.name
+            else:
+                return_picking = self._create_store_supplier_damaged_return_picking()
+                message = _(
+                    "Đã tạo phiếu trả NCC <b>%s</b> cho phần hàng lỗi. Hệ thống vẫn tiếp tục nhập các sản phẩm/số lượng đạt vào kho Cửa hàng."
+                ) % return_picking.name
+            
+            self.env["mer.discrepancy.report"].search(
+                [
+                    ("picking_id", "=", self.id),
+                    ("reason", "=", "damaged"),
+                ]
+            ).write({"return_picking_id": return_picking.id})
         else:
-            return_picking = self._create_store_supplier_damaged_return_picking()
-            message = _(
-                "Đã tạo phiếu trả NCC <b>%s</b> cho phần hàng lỗi. Hệ thống vẫn tiếp tục nhập các sản phẩm/số lượng đạt vào kho Cửa hàng."
-            ) % return_picking.name
-        self.env["mer.discrepancy.report"].search(
-            [
-                ("picking_id", "=", self.id),
-                ("reason", "=", "damaged"),
-            ]
-        ).write({"return_picking_id": return_picking.id})
+            message = _("Cửa hàng ghi nhận có sai lệch thiếu/dư hàng. Hệ thống sẽ tạo báo cáo sai lệch và nhập kho số lượng thực nhận.")
         issue_type = self._ensure_store_receipt_discrepancy_reports(
             submit_shortage=True,
             create_excess_report=True,
@@ -1422,17 +1430,16 @@ class StockPicking(models.Model):
         )
         # Tự động bóp PO để hoàn lại ngân sách cho phần thiếu/lỗi không nhập kho.
         self._adjust_po_quantities_to_actual()
-        self.message_post(body=message, subtype_xmlid="mail.mt_note")
-
+        # Nếu đã phải xử lý qua nút này (có sai lệch), trạng thái QC phải là 'Hàng lỗi' (rejected)
+        self.write(
+            {
+                "wm_qc_status": "rejected",
+                "wm_qc_checked_by": self.env.user.id,
+                "wm_qc_checked_on": fields.Datetime.now(),
+            }
+        )
         valid_qty = sum(active_moves.mapped("quantity"))
         if valid_qty <= 0:
-            self.write(
-                {
-                    "wm_qc_status": "passed",
-                    "wm_qc_checked_by": self.env.user.id,
-                    "wm_qc_checked_on": fields.Datetime.now(),
-                }
-            )
             self.action_cancel()
             self.message_post(
                 body=_("Không có số lượng đạt để nhập kho. Hệ thống giữ các báo cáo lỗi/thiếu/dư để Merchandise xử lý bù hàng hoặc thu hồi."),
@@ -1440,8 +1447,9 @@ class StockPicking(models.Model):
             )
             return return_picking
 
-        if self.wm_qc_status == "draft":
-            self.wm_qc_status = "checking"
+        if self.wm_qc_status != 'checking':
+            self.wm_qc_status = 'checking'
+            
         self.with_context(
             skip_immediate=True,
             skip_backorder=True,
@@ -1502,9 +1510,12 @@ class StockPicking(models.Model):
 
             active_moves = picking.move_ids.filtered(lambda current_move: current_move.state != "cancel")
             damaged_moves = active_moves.filtered(lambda move: move.wm_damaged_qty > 0)
+            
+            # Kiểm tra nếu không có hư hỏng VÀ cũng không có sai lệch thiếu/dư thì mới báo lỗi
+            if not damaged_moves and not picking.store_receipt_has_discrepancy:
+                raise UserError(_("Chưa ghi nhận số lượng hư hỏng hoặc sai lệch. Nếu hàng đạt hoàn hảo, hãy dùng nút Xác nhận nhập hàng vào kho."))
+
             damaged_moves._validate_wm_damaged_qty_not_over_received()
-            if not damaged_moves:
-                raise UserError(_("Chưa ghi nhận số lượng hư hỏng. Nếu hàng đạt, hãy dùng nút Xác nhận nhập hàng vào kho."))
 
             missing_note_moves = damaged_moves.filtered(lambda move: not move.wm_damage_note)
             if missing_note_moves:
@@ -1513,8 +1524,12 @@ class StockPicking(models.Model):
                     % ", ".join(missing_note_moves.mapped("product_id.display_name"))
                 )
 
-            picking._create_store_receipt_damaged_reports()
-            return_picking = picking._create_store_supplier_damaged_return_picking()
+            return_picking = self.env['stock.picking']
+            if damaged_moves:
+                picking._create_store_receipt_damaged_reports()
+                return_picking = picking._create_store_supplier_damaged_return_picking()
+            else:
+                picking.message_post(body=_("Kho tổng ghi nhận có sai lệch thiếu/dư hàng. Hệ thống sẽ tạo báo cáo sai lệch và nhập kho số lượng thực nhận."))
             issue_type = picking._ensure_store_receipt_discrepancy_reports(
                 submit_shortage=True,
                 shortage_note=_("Kho tổng nhận thiếu hàng từ NCC. Báo cáo đã được gửi Merchandise để xử lý tiếp."),
@@ -1525,34 +1540,37 @@ class StockPicking(models.Model):
             picking.write(
                 {
                     "store_receipt_issue_type": issue_type,
-                    "store_rejected_return_picking_id": return_picking.id,
-                    "wm_qc_note": picking.wm_qc_note or _("Từ chối toàn bộ lô giao do phát hiện hàng hư hỏng tại Kho tổng."),
+                    "store_rejected_return_picking_id": return_picking.id if return_picking else False,
+                    "wm_qc_note": picking.wm_qc_note or _("Ghi nhận sai lệch/hàng lỗi tại Kho tổng."),
                 }
             )
             # Tự động bóp PO để hoàn lại ngân sách cho đơn bù hàng
-            picking.wm_qc_note = _("Có hàng hư hỏng tại Kho tổng. Hệ thống trả toàn bộ sản phẩm bị lỗi và chỉ nhập các sản phẩm không lỗi.")
             picking._adjust_po_quantities_to_actual()
             
-            picking.message_post(
-                body=_(
-                    "Đã tạo phiếu trả NCC <b>%s</b> cho toàn bộ lô hàng lỗi. Các sản phẩm/số lượng đạt còn lại vẫn tiếp tục được nhập vào Kho tổng."
+            if return_picking:
+                picking.message_post(
+                    body=_(
+                        "Đã tạo phiếu trả NCC <b>%s</b> cho toàn bộ lô hàng lỗi. Các sản phẩm/số lượng đạt còn lại vẫn tiếp tục được nhập vào Kho tổng."
+                    )
+                    % return_picking.name,
+                    subtype_xmlid="mail.mt_note",
                 )
-                % return_picking.name,
-                subtype_xmlid="mail.mt_note",
+            # Nếu đã phải xử lý qua nút này (có sai lệch), trạng thái QC phải là 'Hàng lỗi' (rejected)
+            picking.write(
+                {
+                    "wm_qc_status": "rejected",
+                    "wm_qc_checked_by": self.env.user.id,
+                    "wm_qc_checked_on": fields.Datetime.now(),
+                }
             )
+
             if sum(active_moves.mapped("quantity")) <= 0:
-                picking.write(
-                    {
-                        "wm_qc_status": "passed",
-                        "wm_qc_checked_by": self.env.user.id,
-                        "wm_qc_checked_on": fields.Datetime.now(),
-                    }
-                )
                 picking.action_cancel()
                 continue
 
-            if picking.wm_qc_status == "draft":
-                super(StockPicking, picking).action_start_qc()
+            if picking.wm_qc_status != 'checking':
+                picking.wm_qc_status = 'checking'
+
             picking.with_context(
                 skip_immediate=True,
                 skip_backorder=True,

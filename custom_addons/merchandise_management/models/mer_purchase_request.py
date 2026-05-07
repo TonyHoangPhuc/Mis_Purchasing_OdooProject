@@ -147,7 +147,34 @@ class MerPurchaseRequestLine(models.Model):
     def create(self, vals_list):
         lines = super().create(vals_list)
         lines.filtered(lambda line: not line.budget_id)._suggest_budget()
+        active_requests = lines.mapped("request_id").filtered(
+            lambda request: request.state in ("approved", "po_created", "done")
+        )
+        if active_requests:
+            self.env["mer.purchase.budget"].sudo()._refresh_usage_metrics()
         return lines
+
+    def write(self, vals):
+        should_refresh_budget = bool(
+            {"product_id", "product_qty", "price_unit", "price_subtotal", "budget_id", "request_id"} & set(vals)
+        )
+        result = super().write(vals)
+        if should_refresh_budget:
+            active_requests = self.mapped("request_id").filtered(
+                lambda request: request.state in ("approved", "po_created", "done")
+            )
+            if active_requests:
+                self.env["mer.purchase.budget"].sudo()._refresh_usage_metrics()
+        return result
+
+    def unlink(self):
+        active_requests = self.mapped("request_id").filtered(
+            lambda request: request.state in ("approved", "po_created", "done")
+        )
+        result = super().unlink()
+        if active_requests:
+            self.env["mer.purchase.budget"].sudo()._refresh_usage_metrics()
+        return result
 
 # Quy trình phê duyệt yêu cầu mua hàng (PR)
 class MerPurchaseRequest(models.Model):
@@ -473,6 +500,16 @@ class MerPurchaseRequest(models.Model):
                 vals['name'] = self.env['ir.sequence'].next_by_code('mer.purchase.request') or _('Mới')
         return super(MerPurchaseRequest, self).create(vals_list)
 
+    def write(self, vals):
+        tracked_fields = {"state", "date_request", "line_ids"}
+        requests_before = self.filtered(lambda request: request.state in ("approved", "po_created", "done"))
+        result = super().write(vals)
+        if tracked_fields & set(vals):
+            requests_after = self.filtered(lambda request: request.state in ("approved", "po_created", "done"))
+            if requests_before or requests_after:
+                self.env["mer.purchase.budget"].sudo()._refresh_usage_metrics()
+        return result
+
     @api.depends('warehouse_id')
     def _compute_company_partner_id(self):
         for request in self:
@@ -527,26 +564,7 @@ class MerPurchaseRequest(models.Model):
 
     # Từ chối yêu cầu
     def action_approve(self):
-        self._validate_budget_selection()
-        for request in self:
-            for item in request._get_budget_summary():
-                budget = item["budget"]
-                amount = item["amount"]
-                if budget and budget.remaining_amount < amount:
-                    category_label = ", ".join(sorted(item["category_names"]))
-                    raise UserError(
-                        _("Vượt ngân sách ngành hàng '%s'! Ngân sách còn lại: %s, Yêu cầu: %s")
-                        % (
-                            category_label,
-                            "{:,.0f}".format(budget.remaining_amount),
-                            "{:,.0f}".format(amount),
-                        )
-                    )
-
-        self.write({'state': 'approved', 'manager_id': self.env.user.id})
-
-    # Từ chối yêu cầu
-    def action_approve(self):
+        self.env["mer.purchase.budget"].sudo()._refresh_usage_metrics()
         self._validate_budget_selection()
         for request in self:
             for item in request._get_budget_summary():

@@ -5,4 +5,5 @@ from . import mer_promotion
 from . import mer_promotion_line
 from . import merchandise_dashboard
 from . import mer_budget
+from . import purchase_order
 from . import res_partner
