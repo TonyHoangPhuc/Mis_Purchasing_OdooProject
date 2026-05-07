@@ -134,7 +134,7 @@
                 <field name="partner_id" string="Nhà CC"/>
                 <field name="date_order" string="Ngày đặt"/>
                 <field name="amount_total" string="Tổng tiền" widget="monetary"/>
-                <field name="state" string="Trạng thái PO" widget="badge" optional="hide"
+                <field name="state" string="Trạng thái PO" widget="badge" optional="show"
                     decoration-warning="state == 'draft' or state == 'sent'"
                     decoration-success="state == 'purchase' or state == 'done'"
                     decoration-danger="state == 'cancel'"
@@ -169,8 +169,8 @@
         <field name="view_mode">list,form</field>
         <field name="view_id" ref="view_mer_po_management_list"/>
         <field name="search_view_id" ref="view_mer_po_management_search"/>
-        <field name="domain">[('origin', 'like', 'PR/')]</field>
-        <field name="context">{'search_default_confirmed': 1}</field>
+        <field name="domain">[]</field>
+        <field name="context">{}</field>
     </record>
 
 </odoo>

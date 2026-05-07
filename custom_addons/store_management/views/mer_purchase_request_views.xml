@@ -431,13 +431,13 @@
     </record>
 
     <record id="warehouse_management.action_merchandise_purchase_orders" model="ir.actions.act_window">
-        <field name="name">Quản lý đơn mua hàng ( PO )</field>
-        <field name="res_model">mer.purchase.request</field>
+        <field name="name">Quản lý PO</field>
+        <field name="res_model">purchase.order</field>
         <field name="view_mode">list,form</field>
-        <field name="view_id" ref="view_mer_purchase_request_tree_order_management"/>
-        <field name="search_view_id" ref="view_mer_purchase_request_search_order_management"/>
-        <field name="domain">[('store_id', '!=', False), ('state', 'in', ['approved', 'po_created', 'done'])]</field>
-        <field name="context">{'search_default_processing_requests': 1}</field>
+        <field name="view_id" ref="merchandise_management.view_mer_po_management_list"/>
+        <field name="search_view_id" ref="merchandise_management.view_mer_po_management_search"/>
+        <field name="domain">[]</field>
+        <field name="context">{}</field>
     </record>
 
     <record id="view_mer_purchase_request_pipeline_kanban" model="ir.ui.view">
