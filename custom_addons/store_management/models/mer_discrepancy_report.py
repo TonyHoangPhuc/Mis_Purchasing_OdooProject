@@ -60,19 +60,6 @@ class MerDiscrepancyReport(models.Model):
                AND report.state = 'draft'
             """
         )
-        self.env.cr.execute(
-            """
-            UPDATE mer_purchase_request_line line
-               SET internal_flow_state = 'rejected'
-              FROM mer_discrepancy_report report
-             WHERE report.reason = 'damaged'
-               AND report.replenishment_request_id IS NOT NULL
-               AND report.state != 'cancel'
-               AND report.picking_id = line.store_receipt_picking_id
-               AND report.product_id = line.product_id
-               AND line.internal_flow_state = 'waiting_store_receipt'
-            """
-        )
         return res
 
     picking_id = fields.Many2one(
