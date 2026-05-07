@@ -110,10 +110,10 @@ class MerPromotion(models.Model):
         if not valid_lots:
             raise UserError(_("Không tìm thấy lô hàng nào sắp hết hạn trong kho."))
 
-        # 3. Gom nhóm SL theo Sản phẩm + Cửa hàng
+        # 3. Gom nhóm SL theo Sản phẩm + Cửa hàng và theo dõi các Lô đóng góp
         # key: (product_id, warehouse_id)
         product_wh_qtys = {}
-        all_wh_ids = set(self.target_store_ids.ids)
+        product_wh_lots = {} # Để biết lô nào thuộc kho nào cho SP nào
         
         for lot in valid_lots:
             lot_quants = store_quants.filtered(lambda q: q.lot_id == lot)
@@ -122,7 +122,9 @@ class MerPromotion(models.Model):
                 if wh:
                     key = (lot.product_id.id, wh.id)
                     product_wh_qtys[key] = product_wh_qtys.get(key, 0.0) + q.quantity
-                    all_wh_ids.add(wh.id)
+                    if key not in product_wh_lots:
+                        product_wh_lots[key] = set()
+                    product_wh_lots[key].add(lot.id)
 
         # 4. Trừ đi số lượng đang chạy ở các KM khác (để tránh trùng lặp)
         active_promos = self.env['mer.promotion'].search([
@@ -146,22 +148,36 @@ class MerPromotion(models.Model):
             if key not in existing_lines_map:
                 existing_lines_map[key] = line
             else:
-                # Nếu đã lỡ có dòng trùng, đánh dấu xóa luôn
                 final_line_vals.append((2, line.id))
 
         current_keys = set()
+        final_wh_ids = set()
+        final_lot_ids = set()
+
         for (p_id, wh_id), qty in product_wh_qtys.items():
-            # Tính tổng SL đã được "đặt chỗ" KM ở các đơn khác
-            other_active_qty = sum(active_lines.filtered(
+            # Tính tổng SL đã bị chiếm bởi các KM khác:
+            # - Trừ "Còn lại" của các KM đang chạy (Active)
+            # - Trừ "Đang đặt" của TẤT CẢ KM (kể cả đã kết thúc nhưng hàng chưa rời kho)
+            other_promos = self.env['mer.promotion'].search([('id', '!=', self.id)])
+            other_lines = other_promos.mapped('line_ids').filtered(
                 lambda l: l.product_id.id == p_id and l.warehouse_id.id == wh_id
-            ).mapped('remaining_qty'))
+            )
+            other_taken_qty = 0.0
+            for ol in other_lines:
+                if ol.promotion_id.state == 'active':
+                    other_taken_qty += ol.remaining_qty + ol.reserved_qty
+                else:
+                    other_taken_qty += ol.reserved_qty
             
-            actual_fetch_qty = max(0.0, qty - other_active_qty)
+            actual_fetch_qty = qty - other_taken_qty
             if actual_fetch_qty <= 0:
                 continue
 
             key = (p_id, wh_id)
             current_keys.add(key)
+            final_wh_ids.add(wh_id)
+            final_lot_ids.update(product_wh_lots.get(key, set()))
+
             if key in existing_lines_map:
                 line = existing_lines_map[key]
                 final_line_vals.append((1, line.id, {
@@ -183,8 +199,8 @@ class MerPromotion(models.Model):
         # 6. Ghi đè toàn bộ trong 1 transaction
         write_vals = {
             'is_expiry_promo': True,
-            'lot_ids': [(6, 0, valid_lots.ids)],
-            'target_store_ids': [(6, 0, list(all_wh_ids))],
+            'lot_ids': [(6, 0, list(final_lot_ids))],
+            'target_store_ids': [(6, 0, list(final_wh_ids))],
         }
         if final_line_vals:
             write_vals['line_ids'] = final_line_vals
@@ -195,7 +211,7 @@ class MerPromotion(models.Model):
         total_qty_actual = sum(self.line_ids.mapped('qty_in_stores'))
         product_details = "\n".join([_(" • %s [%s]: %s") % (l.product_id.name, l.warehouse_id.name, l.qty_in_stores) for l in self.line_ids if l.qty_in_stores > 0])
         msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s.\n%s") % (
-            len(valid_lots), total_qty_actual, product_details
+            len(final_lot_ids), total_qty_actual, product_details
         )
         self.write({'description': (new_description + "\n" + msg).strip()})
 
@@ -288,6 +304,7 @@ class MerPromotion(models.Model):
     @api.model
     def _generate_expiry_promotions(self):
         today = fields.Date.today()
+        from odoo.tools import float_compare
         
         # 1. Xác định các Kho Cửa hàng và Địa điểm chính
         store_warehouses = self.env['stock.warehouse'].search([('mis_role', '=', 'store')])
@@ -302,68 +319,96 @@ class MerPromotion(models.Model):
             ('lot_id.expiration_date', '<=', today + timedelta(days=90))
         ])
         
-        lots_in_stores = store_quants.mapped('lot_id')
-        
+        # 3. Gom nhóm theo SP + Kho và lọc theo cấu hình từng SP
         product_wh_qtys = {}
         all_lot_ids = set()
-        all_warehouse_ids = set()
         
-        for lot in lots_in_stores:
-            # Lọc lại theo cấu hình riêng của từng SP (Chuyển Datetime sang Date để so sánh)
+        for quant in store_quants:
+            lot = quant.lot_id
             expiry_days = lot.product_id.x_mer_expiry_days or 30
             lot_date = fields.Date.to_date(lot.expiration_date)
+            
             if not lot_date or lot_date > today + timedelta(days=expiry_days):
                 continue
 
-            # Kiểm tra trùng lặp
-            domain = [
+            # Kiểm tra xem lô này đã có trong KM nào (Draft/Active) chưa
+            dup_domain = [
                 ('state', 'in', ['draft', 'active']),
                 '|', ('lot_id', '=', lot.id), ('lot_ids', 'in', [lot.id])
             ]
-            if not self.search_count(domain):
-                all_lot_ids.add(lot.id)
-                lot_quants = store_quants.filtered(lambda q: q.lot_id == lot)
-                for quant in lot_quants:
-                    warehouse = quant.location_id.warehouse_id
-                    if not warehouse:
-                        continue
-                    key = (lot.product_id.id, warehouse.id)
-                    product_wh_qtys[key] = product_wh_qtys.get(key, 0.0) + quant.quantity
-                    all_warehouse_ids.add(warehouse.id)
+            if self.search_count(dup_domain):
+                continue
 
-        if product_wh_qtys:
-            # Tạo 1 đợt khuyến mãi tổng hợp cho các sản phẩm cận hạn
-            promo_name = _("KM Hàng cận hạn - %s") % today.strftime('%d/%m/%Y')
+            warehouse = quant.location_id.warehouse_id
+            if not warehouse:
+                continue
+
+            key = (lot.product_id.id, warehouse.id)
+            product_wh_qtys[key] = product_wh_qtys.get(key, 0.0) + quant.quantity
+            all_lot_ids.add(lot.id)
+
+        if not product_wh_qtys:
+            return
+
+        # 4. Trừ đi số lượng đang chạy ở các KM khác
+        active_promos = self.env['mer.promotion'].search([('state', '=', 'active')])
+        active_lines = active_promos.mapped('line_ids')
+
+        line_vals = []
+        final_warehouse_ids = set()
+        final_lot_ids = set()
+
+        for (p_id, wh_id), qty in product_wh_qtys.items():
+            # Tính tổng SL đã bị chiếm bởi các KM khác:
+            other_promos = self.env['mer.promotion'].search([])
+            other_lines = other_promos.mapped('line_ids').filtered(
+                lambda l: l.product_id.id == p_id and l.warehouse_id.id == wh_id
+            )
+            other_taken_qty = 0.0
+            for ol in other_lines:
+                if ol.promotion_id.state == 'active':
+                    other_taken_qty += ol.remaining_qty + ol.reserved_qty
+                else:
+                    other_taken_qty += ol.reserved_qty
             
-            # Tạo bản ghi KM với kho trước
+            actual_fetch_qty = qty - other_taken_qty
+            if float_compare(actual_fetch_qty, 0.0, precision_digits=2) <= 0:
+                continue
+
+            line_vals.append((0, 0, {
+                'product_id': p_id,
+                'warehouse_id': wh_id,
+                'discount_rate': 0.0,
+                'limit_qty': actual_fetch_qty
+            }))
+            final_warehouse_ids.add(wh_id)
+            # Tìm các lô thuộc SP + Kho này để gán vào đầu mục KM
+            relevant_lots = store_quants.filtered(
+                lambda q: q.product_id.id == p_id and q.location_id.warehouse_id.id == wh_id and q.lot_id.id in all_lot_ids
+            ).mapped('lot_id')
+            final_lot_ids.update(relevant_lots.ids)
+
+        if line_vals:
+            # Tạo 1 đợt khuyến mãi tổng hợp
+            promo_name = _("KM Hàng cận hạn - %s") % today.strftime('%d/%m/%Y')
             new_promo = self.create({
                 'name': promo_name,
                 'code': "EXP-%s" % today.strftime('%Y%m%d%H%M'), 
                 'is_expiry_promo': True,
-                'target_store_ids': [(6, 0, list(all_warehouse_ids))],
-                'lot_ids': [(6, 0, list(all_lot_ids))],
+                'target_store_ids': [(6, 0, list(final_warehouse_ids))],
+                'lot_ids': [(6, 0, list(final_lot_ids))],
+                'line_ids': line_vals,
                 'date_start': today,
-                'date_end': False,
             })
             
-            line_vals = []
-            for (product_id, warehouse_id), qty in product_wh_qtys.items():
-                line_vals.append((0, 0, {
-                    'product_id': product_id,
-                    'warehouse_id': warehouse_id,
-                    'discount_rate': 0.0,
-                    'limit_qty': qty
-                }))
-            new_promo.write({'line_ids': line_vals})
-            
-            # Sau khi tạo xong, tính lại tổng tồn kho thực tế của các dòng để ghi vào mô tả
+            # Cập nhật mô tả
             total_qty_actual = sum(new_promo.line_ids.mapped('qty_in_stores'))
-            product_details = "\n".join(
-                [_(" • %s [%s]: %s") % (l.product_id.name, l.warehouse_id.name, l.qty_in_stores) for l in new_promo.line_ids if l.qty_in_stores > 0]
-            )
-            actual_locations = store_quants.filtered(lambda q: q.lot_id.id in all_lot_ids).mapped('location_id')
-            msg = _("--- Cập nhật: Tìm thấy %s lô hàng với tổng tồn %s tại %s.\n%s") % (
-                len(all_lot_ids), total_qty_actual, ", ".join(actual_locations.mapped('display_name')), product_details
+            product_details = "\n".join([
+                _(" • %s [%s]: %s") % (l.product_id.name, l.warehouse_id.name, l.qty_in_stores) 
+                for l in new_promo.line_ids if l.qty_in_stores > 0
+            ])
+            msg = _("--- Tự động: Tìm thấy %s lô hàng cận hạn khả dụng với tổng tồn %s.\n%s") % (
+                len(final_lot_ids), total_qty_actual, product_details
             )
             new_promo.write({'description': msg})
 

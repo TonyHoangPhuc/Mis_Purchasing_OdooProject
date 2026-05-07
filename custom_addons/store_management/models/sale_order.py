@@ -61,20 +61,30 @@ class SaleOrder(models.Model):
         new_lines_to_add = []
         warnings = []
 
+        today = fields.Date.context_today(self)
+        store = self._get_sale_store()
+        if not store or not store.warehouse_id:
+            return
+
         for line in self.order_line:
             if not line.product_id or line.product_uom_qty <= 0:
                 continue
             
-            # Chỉ xử lý các dòng chưa bị tách (không có promotion_line_id hoặc đang ở trạng thái nháp)
-            promo_line = line.product_id.current_promotion_line_id
-            if promo_line and promo_line.promotion_id.state == 'active':
-                # Kiểm tra cửa hàng
-                store = self._get_sale_store()
-                if promo_line.promotion_id.target_store_ids and store.warehouse_id not in promo_line.promotion_id.target_store_ids:
-                    continue
+            # Tìm dòng KM cụ thể cho Cửa hàng này (Thay vì dùng current_promotion_line_id chung của SP)
+            promo_line = self.env['mer.promotion.line'].sudo().search([
+                ('product_id', '=', line.product_id.id),
+                ('warehouse_id', '=', store.warehouse_id.id),
+                ('promotion_id.state', '=', 'active'),
+                ('promotion_id.date_start', '<=', today),
+                '|', ('promotion_id.date_end', '>=', today), ('promotion_id.date_end', '=', False)
+            ], order='discount_rate desc', limit=1)
 
-                # Gán promotion_line_id nếu chưa có
-                if not line.promotion_line_id:
+            if promo_line:
+                # Tính giá KM riêng cho dòng này theo mức giảm của store đó
+                promo_price = line.product_id.lst_price * (1 - (promo_line.discount_rate / 100.0))
+                
+                # Gán promotion_line_id nếu chưa có hoặc đang sai
+                if line.promotion_line_id != promo_line:
                     line.promotion_line_id = promo_line
 
                 if promo_line.limit_qty > 0:
@@ -84,7 +94,7 @@ class SaleOrder(models.Model):
                     )
                     other_lines_qty = sum(other_lines.mapped('product_uom_qty'))
 
-                    # Tính toán số lượng đã "giữ chỗ" bởi các đơn hàng đã xác nhận KHÁC
+                    # Tính toán số lượng đã "giữ chỗ" bởi các đơn hàng đã xác nhận KHÁC (Chỉ tính cho đúng dòng KM của store này)
                     reserved_elsewhere = sum(self.env['sale.order.line'].sudo().search([
                         ('promotion_line_id', '=', promo_line.id),
                         ('state', 'in', ['sale', 'done']),
@@ -99,7 +109,7 @@ class SaleOrder(models.Model):
                         if actual_remaining > 0:
                             # Tách dòng: Giảm số lượng dòng hiện tại và chuẩn bị thêm dòng mới
                             line.product_uom_qty = actual_remaining
-                            line.price_unit = line.product_id.current_promotion_price
+                            line.price_unit = promo_price
                             
                             new_lines_to_add.append({
                                 'product_id': line.product_id.id,
@@ -108,20 +118,20 @@ class SaleOrder(models.Model):
                                 'promotion_line_id': False,
                                 'sale_store_id': store.id,
                             })
-                            warnings.append(_("Sản phẩm '%s' chỉ còn %s suất KM. Đã tách %s sản phẩm sang dòng mới giá gốc.") % (line.product_id.name, actual_remaining, excess))
+                            warnings.append(_("Sản phẩm '%s' chỉ còn %s suất KM tại cửa hàng này. Đã tách %s sản phẩm sang dòng mới giá gốc.") % (line.product_id.name, actual_remaining, excess))
                         else:
                             # Hết sạch suất: Chuyển cả dòng về giá gốc
                             line.price_unit = line.product_id.lst_price
                             line.promotion_line_id = False
-                            warnings.append(_("Sản phẩm '%s' đã hết suất Khuyến mãi. Tự động áp dụng giá gốc.") % line.product_id.name)
+                            warnings.append(_("Sản phẩm '%s' đã hết suất Khuyến mãi tại cửa hàng này. Tự động áp dụng giá gốc.") % line.product_id.name)
                     else:
                         # Vẫn trong định mức: Áp dụng giá KM
-                        line.price_unit = line.product_id.current_promotion_price
+                        line.price_unit = promo_price
                 else:
                     # Không giới hạn số lượng: Áp dụng giá KM
-                    line.price_unit = line.product_id.current_promotion_price
+                    line.price_unit = promo_price
             else:
-                # Không có KM: Áp dụng giá gốc
+                # Không có KM cho cửa hàng này: Áp dụng giá gốc
                 if line.promotion_line_id:
                     line.price_unit = line.product_id.lst_price
                     line.promotion_line_id = False
