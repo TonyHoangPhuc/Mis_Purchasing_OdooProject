@@ -13,9 +13,15 @@
             </xpath>
             <xpath expr="//field[@name='order_line']//list//field[@name='product_id']" position="before">
                 <field name="promotion_line_id" column_invisible="1"/>
+                <field name="x_available_product_ids" column_invisible="1"/>
             </xpath>
-            <xpath expr="//field[@name='order_line']//field[@name='product_id']" position="attributes">
-                <attribute name="domain">[('id', 'in', parent.x_available_product_ids)]</attribute>
+            <xpath expr="//field[@name='order_line']//list//field[@name='product_id']" position="attributes">
+                <attribute name="domain">[('id', 'in', x_available_product_ids)]</attribute>
+                <attribute name="context">{'store_sale_stock_only': True, 'store_id': parent.store_id, 'default_store_id': parent.store_id, 'warehouse': parent.warehouse_id, 'warehouse_id': parent.warehouse_id, 'location': parent.store_stock_location_id, 'default_warehouse_id': parent.warehouse_id}</attribute>
+                <attribute name="options">{'no_create': True, 'no_create_edit': True}</attribute>
+            </xpath>
+            <xpath expr="//field[@name='order_line']//list//field[@name='product_template_id']" position="attributes">
+                <attribute name="domain">[('product_variant_ids', 'in', x_available_product_ids)]</attribute>
                 <attribute name="context">{'store_sale_stock_only': True, 'store_id': parent.store_id, 'default_store_id': parent.store_id, 'warehouse': parent.warehouse_id, 'warehouse_id': parent.warehouse_id, 'location': parent.store_stock_location_id, 'default_warehouse_id': parent.warehouse_id}</attribute>
                 <attribute name="options">{'no_create': True, 'no_create_edit': True}</attribute>
             </xpath>
