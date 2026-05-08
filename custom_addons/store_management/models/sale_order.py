@@ -15,6 +15,13 @@ class SaleOrder(models.Model):
         """Tự động cập nhật Kho của đơn hàng theo Cửa hàng được chọn"""
         if self.store_id and self.store_id.warehouse_id:
             self.warehouse_id = self.store_id.warehouse_id
+            
+        available_products = self._get_sale_store_products()
+        return {
+            'domain': {
+                'order_line.product_id': [('id', 'in', available_products.ids)]
+            }
+        }
     store_stock_location_id = fields.Many2one(
         "stock.location",
         string="Vị trí tồn cửa hàng",
@@ -25,6 +32,7 @@ class SaleOrder(models.Model):
         "product.product",
         compute="_compute_store_available_products",
         string="Sản phẩm có sẵn tại cửa hàng",
+        store=True,
     )
 
     def _get_sale_store(self):
@@ -151,6 +159,17 @@ class SaleOrder(models.Model):
 
 class SaleOrderLine(models.Model):
     _inherit = "sale.order.line"
+
+    x_available_product_ids = fields.Many2many(
+        "product.product",
+        compute="_compute_store_available_products",
+        string="Sản phẩm có sẵn tại cửa hàng",
+    )
+
+    @api.depends('order_id.store_id')
+    def _compute_store_available_products(self):
+        for line in self:
+            line.x_available_product_ids = line.order_id._get_sale_store_products() if line.order_id else self.env["product.product"]
 
     sale_store_id = fields.Many2one(
         "store.store",
